@@ -1,17 +1,25 @@
 """TOML configuration load/save for Parakeet Cage."""
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field
 from pathlib import Path
-
+from typing import Optional
 import tomllib
 
 
 @dataclass
 class Config:
-    record_hotkey: str = "ctrl+shift+s"
+    record_hotkey: str = "f9"
     quit_hotkey: str = "ctrl+shift+q"
-    model_path: str = ""
+    speech_model: str = "models/parakeet-redux"
     audio_device: str = ""
+    device: str = "cpu"
+    model_path: Optional[str] = None
+
+    def __post_init__(self):
+        if self.model_path is not None:
+            self.speech_model = self.model_path
+        else:
+            self.model_path = self.speech_model
 
 
 def load_config(path: Path) -> Config:
@@ -20,11 +28,14 @@ def load_config(path: Path) -> Config:
         return Config()
     with open(path, "rb") as f:
         data = tomllib.load(f)
+    model_val = data.get("model", {}).get("path", "models/parakeet-redux")
     return Config(
-        record_hotkey=data.get("hotkeys", {}).get("record", "ctrl+shift+s"),
+        record_hotkey=data.get("hotkeys", {}).get("record", "f9"),
         quit_hotkey=data.get("hotkeys", {}).get("quit", "ctrl+shift+q"),
-        model_path=data.get("model", {}).get("path", ""),
+        speech_model=model_val,
+        model_path=model_val,
         audio_device=data.get("audio", {}).get("device", ""),
+        device=data.get("model", {}).get("device", "cpu"),
     )
 
 
@@ -36,6 +47,7 @@ def save_config(cfg: Config, path: Path) -> None:
         f.write(f'record = "{cfg.record_hotkey}"\n')
         f.write(f'quit = "{cfg.quit_hotkey}"\n')
         f.write("\n[model]\n")
-        f.write(f'path = "{cfg.model_path}"\n')
+        f.write(f'path = "{cfg.speech_model}"\n')
+        f.write(f'device = "{cfg.device}"\n')
         f.write("\n[audio]\n")
         f.write(f'device = "{cfg.audio_device}"\n')

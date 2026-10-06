@@ -1,7 +1,7 @@
 """Tests for parakeet_cage.lexicon (personal dictionary).
 
 Tiers and thresholds come from measuring Parakeet Redux on rare words (see
-CHANGELOG 1.1.0): errors are near-misses phonetically even when edit distance is
+CHANGELOG 1.2.0): errors are near-misses phonetically even when edit distance is
 large ("kestrel" heard as "Castrell"), while the model encodes ordinary words it
 knows in one or two subword pieces ("our", "will", "socket") and those must never
 be rewritten on a hunch.
@@ -204,6 +204,76 @@ def test_record_touches_nothing_when_nothing_changed(tmp_path, counted):
     lex = Lexicon.load(lexicon_path, piece_cost=piece_counter_for(TOKENIZER))
 
     lex.record(lex.apply("nothing to correct here"))
+
+    assert lexicon_path.read_bytes() == before
+
+
+def test_save_entries_adds_a_word_without_touching_the_rest(tmp_path):
+    """The dictionary window edits a file the user also maintains by hand."""
+    lexicon_path = tmp_path / "lexicon.toml"
+    lexicon_path.write_text(
+        "# keep me\nschema_version = 1\n\n[[word]]\n"
+        'word = "kestrel"          # notes survive\nhits = 3\n',
+        encoding="utf-8",
+    )
+    lex = Lexicon.load(lexicon_path, piece_cost=None)
+
+    lex.save_entries([*lex.entries, Entry(word="Möbius", aliases=("Mobilius",))])
+
+    text = lexicon_path.read_text(encoding="utf-8")
+    assert "# keep me" in text
+    assert "# notes survive" in text
+    assert 'word = "Möbius"' in text and 'aliases = ["Mobilius"]' in text
+    reloaded = Lexicon.load(lexicon_path, piece_cost=None)
+    assert [entry.word for entry in reloaded.entries] == ["kestrel", "Möbius"]
+    assert reloaded.entries[0].hits == 3
+
+
+def test_save_entries_edits_aliases_and_enabled_in_place(tmp_path):
+    lexicon_path = tmp_path / "lexicon.toml"
+    lexicon_path.write_text(
+        "schema_version = 1\n\n[[word]]\n"
+        'word = "kestrel"\naliases = ["castrell"]\nenabled = true\nhits = 0\n',
+        encoding="utf-8",
+    )
+    lex = Lexicon.load(lexicon_path, piece_cost=None)
+
+    lex.save_entries([Entry(word="kestrel", aliases=("castrell", "kestral"), enabled=False, hits=7)])
+
+    text = lexicon_path.read_text(encoding="utf-8")
+    assert 'aliases = ["castrell", "kestral"]' in text
+    assert "enabled = false" in text
+    assert "hits = 7" in text
+
+
+def test_save_entries_removes_a_deleted_word(tmp_path):
+    lexicon_path = tmp_path / "lexicon.toml"
+    lexicon_path.write_text(
+        "# header\nschema_version = 1\n\n[[word]]\n"
+        'word = "kestrel"\n\n[[word]]\nword = "OAuth"\n',
+        encoding="utf-8",
+    )
+    lex = Lexicon.load(lexicon_path, piece_cost=None)
+
+    lex.save_entries([Entry(word="OAuth")])
+
+    text = lexicon_path.read_text(encoding="utf-8")
+    assert "# header" in text
+    assert "kestrel" not in text
+    assert 'word = "OAuth"' in text
+    assert [entry.word for entry in Lexicon.load(lexicon_path, piece_cost=None).entries] == ["OAuth"]
+
+
+def test_save_entries_leaves_an_unchanged_file_alone(tmp_path):
+    lexicon_path = tmp_path / "lexicon.toml"
+    lexicon_path.write_text(
+        "schema_version = 1\n\n[[word]]\nword = \"kestrel\"\nhits = 0\n",
+        encoding="utf-8",
+    )
+    before = lexicon_path.read_bytes()
+    lex = Lexicon.load(lexicon_path, piece_cost=None)
+
+    lex.save_entries(list(lex.entries))
 
     assert lexicon_path.read_bytes() == before
 

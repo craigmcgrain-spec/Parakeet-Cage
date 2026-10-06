@@ -47,11 +47,13 @@ class TrayManager:
         on_quit: Callable[[], None],
         on_undo: Optional[Callable[[], bool]] = None,
         can_undo: Optional[Callable[[], bool]] = None,
+        on_dictionary: Optional[Callable[[], None]] = None,
     ):
         self._on_settings = on_settings
         self._on_quit = on_quit
         self._on_undo = on_undo
         self._can_undo = can_undo or (lambda: False)
+        self._on_dictionary = on_dictionary
         self._icon: Optional[pystray.Icon] = None
         self._thread: Optional[threading.Thread] = None
 
@@ -67,6 +69,8 @@ class TrayManager:
                 )
             )
         items.append(pystray.MenuItem("Settings", self._handle_settings))
+        if self._on_dictionary is not None:
+            items.append(pystray.MenuItem("Dictionary…", self._handle_dictionary))
         items.append(pystray.MenuItem("Quit", self._handle_quit))
         menu = pystray.Menu(*items)
         self._icon = pystray.Icon("parakeet-cage", image, "Parakeet Cage", menu)
@@ -106,6 +110,10 @@ class TrayManager:
     def _handle_undo(self, icon, item) -> None:
         if self._on_undo is not None:
             self._on_undo()
+
+    def _handle_dictionary(self, icon, item) -> None:
+        if self._on_dictionary is not None:
+            self._on_dictionary()
 
     def _handle_quit(self, icon, item) -> None:
         self._on_quit()

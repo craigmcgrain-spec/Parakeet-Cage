@@ -1,6 +1,6 @@
 """Personal dictionary: teach the app the words this engine reliably mishears.
 
-Measured on Parakeet Redux (see CHANGELOG 1.1.0): rare personal vocabulary fails even
+Measured on Parakeet Redux (see CHANGELOG 1.2.0): rare personal vocabulary fails even
 with clean audio, and the errors are *phonetic* near-misses whose edit distance can
 look large -- "kestrel" is heard as "Castrell", "Parakeet" as "Parakita".
 
@@ -25,7 +25,7 @@ Skeleton *equality* is required for the same reason: "castle" is one skeleton ed
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as _replace
 import logging
 import re
 from pathlib import Path
@@ -76,6 +76,7 @@ class Queued:
     suggestion: str
     method: str
     distance: int
+    count: int = 1
 
 
 @dataclass(frozen=True)
@@ -191,6 +192,46 @@ def _toml_string(value: str) -> str:
     return f'"{escaped}"'
 
 
+def read_queue(path) -> List[Queued]:
+    """Candidates awaiting review, as written by blocked dictionary matches."""
+    path = Path(path)
+    if not path.exists():
+        return []
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning("Candidate queue %s is unreadable (%s); ignoring it", path, e)
+        return []
+    candidates: List[Queued] = []
+    for row in data.get("candidate", []):
+        heard = str(row.get("heard", "")).strip()
+        if not heard:
+            continue
+        candidates.append(
+            Queued(
+                token=heard,
+                suggestion=str(row.get("suggested", "")).strip(),
+                method=str(row.get("method", "")),
+                distance=int(row.get("distance", 0)),
+                count=int(row.get("count", 1)),
+            )
+        )
+    return candidates
+
+
+def write_queue(path, candidates: Sequence[Queued]) -> None:
+    lines = [f"schema_version = {SCHEMA_VERSION}", ""]
+    for candidate in candidates:
+        lines.append("[[candidate]]")
+        lines.append(f"heard = {_toml_string(candidate.token)}")
+        lines.append(f"suggested = {_toml_string(candidate.suggestion)}")
+        lines.append(f"method = {_toml_string(candidate.method)}")
+        lines.append(f"distance = {candidate.distance}")
+        lines.append(f"count = {candidate.count}")
+        lines.append("")
+    _write_atomic(Path(path), "\n".join(lines))
+
+
 class Lexicon:
     """Applies a personal dictionary to transcribed text."""
 
@@ -207,6 +248,37 @@ class Lexicon:
         self.queue_path = Path(queue_path) if queue_path else None
         self.max_distance = max_distance
         self.source_path = Path(source_path) if source_path else None
+        self._loaded_stamp: Optional[int] = self._stamp()
+
+    def _stamp(self) -> Optional[int]:
+        """Modification time of the dictionary file, or None when there is no file."""
+        if self.source_path is None:
+            return None
+        try:
+            return self.source_path.stat().st_mtime_ns
+        except OSError:
+            return None
+
+    def reload_if_changed(self) -> bool:
+        """Pick up edits made outside this process: hand edits or the dictionary window.
+
+        Called before each utterance, so a saved change applies to the very next dictation.
+        """
+        if self.source_path is None:
+            return False
+        stamp = self._stamp()
+        if stamp is None or stamp == self._loaded_stamp:
+            return False
+        fresh = Lexicon.load(
+            self.source_path,
+            piece_cost=self.piece_cost,
+            queue_path=self.queue_path,
+            max_distance=self.max_distance,
+        )
+        self.entries = fresh.entries
+        self._loaded_stamp = fresh._loaded_stamp
+        logger.debug("Reloaded the dictionary: %d entries", len(self.entries))
+        return True
 
     # -- loading and persistence ---------------------------------------------
 
@@ -303,6 +375,103 @@ class Lexicon:
         pieces.append(text[position:])
 
         _write_atomic(path, "".join(pieces))
+        self._loaded_stamp = self._stamp()
+
+    # -- editing (used by the dictionary window) ------------------------------
+
+    @staticmethod
+    def _block_entry(body: str) -> Optional[Entry]:
+        """The entry a `[[word]]` block currently expresses, with TOML defaults applied."""
+        word_match = re.search(r'(?m)^\s*word\s*=\s*"([^"]*)"', body)
+        if not word_match:
+            return None
+        aliases_match = re.search(r"(?m)^\s*aliases\s*=\s*\[(.*?)\]", body)
+        aliases: Tuple[str, ...] = ()
+        if aliases_match and aliases_match.group(1).strip():
+            aliases = tuple(part.strip().strip('"') for part in aliases_match.group(1).split(",") if part.strip())
+        hits_match = re.search(r"(?m)^\s*hits\s*=\s*(\d+)", body)
+        return Entry(
+            word=word_match.group(1),
+            aliases=aliases,
+            enabled=not re.search(r"(?m)^\s*enabled\s*=\s*false", body),
+            hits=int(hits_match.group(1)) if hits_match else 0,
+        )
+
+    def _render_block(self, entry: Entry) -> str:
+        lines = ["[[word]]", f"word = {_toml_string(entry.word)}"]
+        if entry.aliases:
+            lines.append("aliases = [" + ", ".join(_toml_string(alias) for alias in entry.aliases) + "]")
+        lines.append(f"enabled = {'true' if entry.enabled else 'false'}")
+        lines.append(f"hits = {entry.hits}")
+        return "\n".join(lines) + "\n"
+
+    @staticmethod
+    def _rewrite_block(body: str, entry: Entry) -> str:
+        """Replace one block's values, leaving its comments, spacing and ordering alone."""
+
+        def set_line(pattern: str, replacement: str) -> None:
+            nonlocal body
+            if re.search(pattern, body, re.MULTILINE):
+                body = re.sub(pattern, replacement.replace("\\", "\\\\"), body, count=1, flags=re.MULTILINE)
+            else:
+                body = body.rstrip("\n") + f"\n{replacement}\n\n"
+
+        set_line(r'(?m)^\s*word\s*=\s*".*"', f"word = {_toml_string(entry.word)}")
+        if entry.aliases:
+            values = ", ".join(_toml_string(alias) for alias in entry.aliases)
+            set_line(r"(?m)^\s*aliases\s*=\s*\[.*\]", f"aliases = [{values}]")
+        else:
+            body = re.sub(r"(?m)^\s*aliases\s*=\s*\[.*\]\n", "", body, count=1)
+        set_line(r"(?m)^\s*enabled\s*=\s*(?:true|false)", f"enabled = {'true' if entry.enabled else 'false'}")
+        set_line(r"(?m)^\s*hits\s*=\s*-?\d+", f"hits = {entry.hits}")
+        return body
+
+    def save_entries(self, entries: Sequence[Entry]) -> None:
+        """Reconcile the dictionary file with `entries`, preserving hand-written content.
+
+        Blocks are matched by word: kept blocks are only touched where a value differs, new
+        words are appended, deleted words lose their block. Everything else in the file —
+        comments, blank lines, ordering — is left exactly as the user wrote it.
+        """
+        new_entries = list(entries)
+        path = self.source_path
+
+        if path is None or not path.exists():
+            if path is not None:
+                _write_atomic(path, "\n".join(self._render_block(e) for e in new_entries))
+            self.entries = new_entries
+            return
+
+        text = path.read_text(encoding="utf-8")
+        blocks = list(re.finditer(r"^\[\[word\]\]", text, re.MULTILINE))
+        remaining = {entry.word: entry for entry in new_entries}
+        pieces: List[str] = []
+        position = 0
+        kept: List[str] = []
+
+        for index, block in enumerate(blocks):
+            end = blocks[index + 1].start() if index + 1 < len(blocks) else len(text)
+            body = text[block.start():end]
+            current = self._block_entry(body)
+            target = remaining.pop(current.word, None) if current else None
+            pieces.append(text[position:block.start()])
+            if target is not None:
+                kept.append(target.word)
+                pieces.append(body if current == target else self._rewrite_block(body, target))
+            position = end
+        pieces.append(text[position:])
+
+        result = "".join(pieces)
+        appended = [entry for entry in new_entries if entry.word not in kept]
+        if appended:
+            if not result.endswith("\n"):
+                result += "\n"
+            result += "\n" + "\n".join(self._render_block(entry) for entry in appended)
+
+        if result != text:
+            _write_atomic(path, result)
+        self.entries = new_entries
+        self._loaded_stamp = self._stamp()
 
     def record(self, result: Result) -> None:
         """Persist hit counters and queue the blocked candidates. Never raises."""
@@ -317,19 +486,10 @@ class Lexicon:
             logger.warning("Could not persist dictionary state: %s", e)
 
     def _merge_queue(self, queued: Sequence[Queued]) -> None:
-        counts: Dict[Tuple[str, str, str, int], int] = {}
-        order: List[Tuple[str, str, str, int]] = []
-        if self.queue_path.exists():
-            try:
-                data = tomllib.loads(self.queue_path.read_text(encoding="utf-8"))
-                for row in data.get("candidate", []):
-                    key = (str(row.get("heard", "")), str(row.get("suggested", "")),
-                           str(row.get("method", "")), int(row.get("distance", 0)))
-                    if key[0]:
-                        counts[key] = int(row.get("count", 1))
-                        order.append(key)
-            except Exception as e:
-                logger.debug("Existing candidate queue unreadable (%s); rewriting it", e)
+        existing = read_queue(self.queue_path)
+        counts = {(c.token, c.suggestion, c.method, c.distance): c.count for c in existing}
+        originals = {(c.token, c.suggestion, c.method, c.distance): c for c in existing}
+        order = [(c.token, c.suggestion, c.method, c.distance) for c in existing]
         for candidate in queued:
             key = (candidate.token, candidate.suggestion, candidate.method, candidate.distance)
             if not key[0]:
@@ -337,19 +497,10 @@ class Lexicon:
             if key not in counts:
                 order.append(key)
                 counts[key] = 0
-            counts[key] += 1
+                originals[key] = candidate
+            counts[key] += candidate.count
 
-        lines = [f"schema_version = {SCHEMA_VERSION}", ""]
-        for key in order:
-            token, suggestion, method, distance = key
-            lines.append("[[candidate]]")
-            lines.append(f"heard = {_toml_string(token)}")
-            lines.append(f"suggested = {_toml_string(suggestion)}")
-            lines.append(f"method = {_toml_string(method)}")
-            lines.append(f"distance = {distance}")
-            lines.append(f"count = {counts[key]}")
-            lines.append("")
-        _write_atomic(self.queue_path, "\n".join(lines))
+        write_queue(self.queue_path, [_replace(originals[key], count=counts[key]) for key in order])
 
     # -- matching ------------------------------------------------------------
 

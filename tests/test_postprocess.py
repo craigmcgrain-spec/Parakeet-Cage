@@ -92,6 +92,36 @@ def test_record_persists_hits_and_queue(tmp_path):
     assert "hits = 0" in lexicon_path.read_text(encoding="utf-8")
 
 
+def test_pipeline_picks_up_hand_edits_without_a_restart(tmp_path):
+    """Editing the file (by hand or in the dictionary window) applies to the next dictation."""
+    import os
+
+    lexicon_path = tmp_path / "lexicon.toml"
+    lexicon_path.write_text('schema_version = 1\n\n[[word]]\nword = "kestrel"\n', encoding="utf-8")
+    pipeline = build_pipeline(TextConfig(lexicon_path=str(lexicon_path)), tokenizer_path=None)
+    assert pipeline.process("we use castrell daily").final == "we use castrell daily"
+
+    stamp = lexicon_path.stat().st_mtime_ns
+    lexicon_path.write_text(
+        'schema_version = 1\n\n[[word]]\nword = "kestrel"\naliases = ["castrell"]\n',
+        encoding="utf-8",
+    )
+    # make the change unambiguously newer than the load, whatever the filesystem granularity
+    os.utime(lexicon_path, ns=(stamp + 2_000_000_000, stamp + 2_000_000_000))
+
+    assert pipeline.process("we use castrell daily").final == "we use kestrel daily"
+
+
+def test_pipeline_saves_entries_through_to_the_file(tmp_path):
+    lexicon_path = tmp_path / "lexicon.toml"
+    pipeline = build_pipeline(TextConfig(lexicon_path=str(lexicon_path)), tokenizer_path=None)
+
+    pipeline.save_entries([Entry(word="kestrel", aliases=("castrell",))])
+
+    assert pipeline.process("castrell daily").final == "kestrel daily"
+    assert 'aliases = ["castrell"]' in lexicon_path.read_text(encoding="utf-8")
+
+
 def test_build_pipeline_creates_a_documented_template(tmp_path):
     lexicon_path = tmp_path / "lexicon.toml"
 

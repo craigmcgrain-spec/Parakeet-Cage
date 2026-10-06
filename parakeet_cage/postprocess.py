@@ -82,12 +82,19 @@ class TextPipeline:
         queued: Tuple[Queued, ...] = ()
         if self.lexicon is not None:
             try:
+                self.lexicon.reload_if_changed()
                 result = self.lexicon.apply(final)
                 final, applied, queued = result.text, result.applied, result.queued
             except Exception as e:
                 logger.warning("Dictionary matching failed (%s); continuing without it", e)
 
         return Change(raw=text, final=final, applied=applied, queued=queued)
+
+    def save_entries(self, entries) -> None:
+        """Write edited entries through to the dictionary file (used by the editor window)."""
+        if self.lexicon is None:
+            return
+        self.lexicon.save_entries(entries)
 
     def record(self, change: Change) -> None:
         """Persist hit counters and queued candidates for a processed change."""

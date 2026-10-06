@@ -179,8 +179,9 @@ hits = 0                          # maintained by the app
 ```
 
 Edit it with any editor. Comments, spacing and ordering are preserved — the app rewrites only the
-`hits = N` values, in place, and only when a correction actually happened. Entries are read when
-the daemon starts, so **restart Parakeet Cage to pick up your changes**.
+`hits = N` values, in place, and only when a correction actually happened. The file is re-read
+whenever it changes, so your edits apply to the **next dictation** — no restart needed. See
+[docs/lexicon.md](docs/lexicon.md) for the file's full lifecycle.
 
 Matching is case-insensitive and whole-word only, and it is deliberately tiered:
 
@@ -200,7 +201,13 @@ and was rewritten to it during end-to-end testing, so looser matches are now que
 
 ```bash
 parakeet-cage --pending        # list queued candidates with how often each was seen
+parakeet-cage --dictionary     # open the dictionary window (also in the tray menu)
 ```
+
+The window lists your words — spelling, aliases, an on/off switch and how often each has fired —
+and the candidates below it, each with **Add as alias** and **Ignore**. `Save` writes both files in
+place, keeping comments and formatting, and the daemon picks the change up on your next dictation.
+`Esc` closes.
 
 Copy the ones you agree with into the lexicon file; the next dictation uses them. After any
 transcript was changed, the tray menu offers **Undo last correction**, which re-pastes the
@@ -285,7 +292,7 @@ rarity-checked fuzzy match.
 ## Development
 
 ```bash
-python3 -m pytest -q          # 99 tests
+python3 -m pytest -q          # 117 tests
 ```
 
 | Path | Contents |

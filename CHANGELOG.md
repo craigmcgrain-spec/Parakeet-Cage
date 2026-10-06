@@ -4,13 +4,21 @@ All notable changes to Parakeet Cage. This project adheres to
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.0] — 2026-10-06
+## [1.2.0] — 2026-10-06
 
-Spoken punctuation and a personal dictionary, both applied between the model's output and
-the clipboard.
+Spoken punctuation and a personal dictionary you manage in the app, both applied between the
+model's output and the clipboard.
 
 ### Added
 
+- **Dictionary window** (`parakeet_cage/dictionary_ui.py`), reachable from the tray menu
+  (*Dictionary…*) or `parakeet-cage --dictionary`: lists your words with their aliases, an on/off
+  switch and a hit count, and the candidates the guard refused to apply, each with *Add as alias*
+  and *Ignore*. Saving writes both files in place — comments and formatting in a hand-edited
+  `lexicon.toml` survive — and the decision logic lives in a widget-free `DictionaryModel` that is
+  unit-tested.
+- **Live reload**: the dictionary is re-read whenever the file changes on disk, so hand edits and
+  window saves apply to the *next* dictation instead of requiring a restart.
 - **Spoken punctuation** (`parakeet_cage/textnorm.py`). Command words become symbols:
   `question mark` → `?`, `period`/`full stop`, `comma`, `exclamation mark`/`point`, `colon`,
   `semicolon`, `ellipsis`, `dash`, `hyphen`, `dot`, `at sign`, `underscore`, `slash`, brackets,
@@ -50,7 +58,7 @@ the clipboard.
 - `Config` gained a `TextConfig` section, and the settings dialog now uses
   `ui.build_config()` (dataclass `replace`) so saving hotkeys no longer resets the `[text]`
   section to defaults.
-- Test suite grew from 38 to 102 tests, including fixtures taken from real measured model output.
+- Test suite grew from 38 to 117 tests, including fixtures taken from real measured model output.
 
 ### Fixed
 
@@ -130,5 +138,5 @@ Moondream's [Parakeet Redux](https://huggingface.co/moondream/parakeet-redux) mo
   registration is not implemented.
 - X11 (non-Wayland) sessions fall back to `xdotool`/`pynput`, which reach X11 clients only.
 
-[1.1.0]: https://github.com/craigmcgrain-spec/Parakeet-Cage/releases/tag/v1.1
+[1.2.0]: https://github.com/craigmcgrain-spec/Parakeet-Cage/releases/tag/v1.2
 [1.0.0]: https://github.com/craigmcgrain-spec/Parakeet-Cage/releases/tag/v1.0

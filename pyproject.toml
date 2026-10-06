@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "parakeet-cage"
-version = "1.1.0"
+version = "1.2.0"
 description = "Push-to-talk dictation for Linux with fully local inference, powered by Moondream Parakeet Redux"
 readme = "README.md"
 requires-python = ">=3.11"

@@ -13,6 +13,7 @@ from parakeet_cage import __version__
 from parakeet_cage.audio import AudioRecorder
 from parakeet_cage.clipboard import paste_text
 from parakeet_cage.config import Config, load_config, save_config
+from parakeet_cage.dictionary_ui import DictionaryWindow, open_dictionary_window
 from parakeet_cage.hotkey import AppState, HotkeyListener, StateMachine
 from parakeet_cage.postprocess import Change, build_pipeline, default_queue_path
 from parakeet_cage.transcriber import Transcriber, resolve_local_model_path
@@ -55,15 +56,16 @@ class Application:
             on_quit=self.quit,
             on_undo=self.undo_last_correction,
             can_undo=self.has_correction_to_undo,
+            on_dictionary=self._open_dictionary,
         )
+
+    def _open_dictionary(self) -> None:
+        """Show the dictionary window on the tray's GLib main loop."""
+        DictionaryWindow(self.pipeline).show()
 
     def _tokenizer_path(self) -> Optional[Path]:
         """The model's tokenizer, used to tell known words from misheard ones."""
-        try:
-            return resolve_local_model_path(self.config.speech_model) / "tokenizer.json"
-        except Exception as e:
-            logger.debug("No local model directory for tokenizer lookup: %s", e)
-            return None
+        return tokenizer_path_for(self.config)
 
     def _on_start_record(self) -> None:
         logger.info("[APP] Record hotkey pressed -> Switching to RECORDING (Red)")
@@ -181,6 +183,15 @@ class Application:
         sys.exit(0)
 
 
+def tokenizer_path_for(config: Config) -> Optional[Path]:
+    """The model's tokenizer file, used to tell known words from misheard ones."""
+    try:
+        return resolve_local_model_path(config.speech_model) / "tokenizer.json"
+    except Exception as e:
+        logger.debug("No local model directory for tokenizer lookup: %s", e)
+        return None
+
+
 def format_pending(queue_path: Path) -> str:
     """Human-readable listing of dictionary candidates that were blocked by the guard."""
     path = Path(queue_path)
@@ -217,10 +228,21 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         action="store_true",
         help="list dictionary words that need confirming, then exit",
     )
+    parser.add_argument(
+        "--dictionary",
+        action="store_true",
+        help="open the dictionary window and exit",
+    )
     args = parser.parse_args(argv)
 
     if args.pending:
         print(format_pending(default_queue_path()))
+        return
+
+    if args.dictionary:
+        config = load_config(DEFAULT_CONFIG_PATH)
+        pipeline = build_pipeline(config.text, tokenizer_path=tokenizer_path_for(config))
+        open_dictionary_window(config, pipeline)
         return
 
     app = Application()

@@ -2,7 +2,6 @@
 
 from enum import Enum, auto
 import logging
-import select
 import threading
 import time
 from typing import Callable, Optional
@@ -44,17 +43,20 @@ class StateMachine:
         with self._lock:
             if self._state == AppState.IDLE:
                 self._state = AppState.RECORDING
+                logger.info("StateMachine: Transitioning IDLE -> RECORDING")
                 self._on_start_record()
 
     def handle_record_released(self) -> None:
         with self._lock:
             if self._state == AppState.RECORDING:
                 self._state = AppState.TRANSCRIBING
+                logger.info("StateMachine: Transitioning RECORDING -> TRANSCRIBING")
                 self._on_stop_record()
 
     def handle_transcribe_finished(self) -> None:
         with self._lock:
             self._state = AppState.IDLE
+            logger.info("StateMachine: Transitioning -> IDLE")
 
     def handle_quit(self) -> None:
         self._on_quit()
@@ -89,7 +91,7 @@ def parse_hotkey(hotkey_str: str, display: Display):
 
 
 class HotkeyListener:
-    """Listens for global key combinations via Xlib grab_key."""
+    """Listens for global key combinations."""
 
     def __init__(
         self,
@@ -117,7 +119,6 @@ class HotkeyListener:
     def update_hotkeys(self, record_hotkey: str, quit_hotkey: str) -> None:
         self.record_hotkey = record_hotkey
         self.quit_hotkey = quit_hotkey
-        # Re-trigger grab on next loop iteration
         if self._disp:
             self._grab_keys(self._disp)
 
@@ -125,7 +126,6 @@ class HotkeyListener:
         root = disp.screen().root
         root.ungrab_key(X.AnyKey, X.AnyModifier)
 
-        # Standard modifier variations (Caps Lock, Num Lock)
         mod_variants = [0, X.Mod2Mask, X.LockMask, X.Mod2Mask | X.LockMask]
 
         for hotkey, name in [(self.record_hotkey, "record"), (self.quit_hotkey, "quit")]:
@@ -145,6 +145,7 @@ class HotkeyListener:
                         X.GrabModeAsync,
                         X.GrabModeAsync,
                     )
+                disp.sync()
                 logger.info("Registered global %s hotkey: '%s' (keycode=%s)", name, hotkey, keycode)
             except Exception as e:
                 logger.error("Failed to grab key for '%s': %s", hotkey, e)
@@ -159,13 +160,12 @@ class HotkeyListener:
         disp = self._disp
         self._grab_keys(disp)
 
-        record_code, _ = parse_hotkey(self.record_hotkey, disp) if self.record_hotkey else (0, 0)
-        quit_code, _ = parse_hotkey(self.quit_hotkey, disp) if self.quit_hotkey else (0, 0)
-
-        logger.info("Global hotkey listener active.")
+        logger.info("Global hotkey listener loop running.")
 
         while self._running:
-            # Check for events with timeout to allow graceful shutdown
+            record_code, _ = parse_hotkey(self.record_hotkey, disp) if self.record_hotkey else (0, 0)
+            quit_code, _ = parse_hotkey(self.quit_hotkey, disp) if self.quit_hotkey else (0, 0)
+
             while disp.pending_events() > 0 and self._running:
                 event = disp.next_event()
 
@@ -177,7 +177,7 @@ class HotkeyListener:
 
                 elif event.type == X.KeyRelease:
                     if event.detail == record_code and record_code != 0:
-                        # Check for key repeat: if next event is KeyPress with same keycode and time, ignore
+                        # Debounce auto-repeat
                         if disp.pending_events() > 0:
                             next_ev = disp.next_event()
                             if (
@@ -185,7 +185,6 @@ class HotkeyListener:
                                 and next_ev.detail == event.detail
                                 and next_ev.time == event.time
                             ):
-                                # Key repeat, continue holding
                                 continue
                             else:
                                 disp.put_back_event(next_ev)

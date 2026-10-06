@@ -1,8 +1,16 @@
-"""System tray integration via pystray."""
+"""System tray integration via pystray with thread-safe icon updates."""
 
 import logging
 import threading
 from typing import Callable, Optional
+
+import gi
+try:
+    gi.require_version("Gdk", "3.0")
+    gi.require_version("Gtk", "3.0")
+except ValueError:
+    pass
+from gi.repository import GLib
 
 from PIL import Image, ImageDraw
 import pystray
@@ -18,14 +26,14 @@ def create_tray_icon_image(state: AppState = AppState.IDLE) -> Image.Image:
     draw = ImageDraw.Draw(img)
 
     if state == AppState.RECORDING:
-        # Red circle for recording
-        draw.ellipse([8, 8, 56, 56], fill="#e74c3c", outline="#c0392b", width=2)
+        # Bright Red circle for recording
+        draw.ellipse([6, 6, 58, 58], fill="#e74c3c", outline="#c0392b", width=3)
     elif state == AppState.TRANSCRIBING:
-        # Amber circle for transcribing / processing
-        draw.ellipse([8, 8, 56, 56], fill="#f39c12", outline="#d68910", width=2)
+        # Bright Amber circle for transcribing / processing
+        draw.ellipse([6, 6, 58, 58], fill="#f39c12", outline="#d68910", width=3)
     else:
-        # Teal / blue circle for idle ready state
-        draw.ellipse([8, 8, 56, 56], fill="#2ecc71", outline="#27ae60", width=2)
+        # Bright Green circle for idle ready state
+        draw.ellipse([6, 6, 58, 58], fill="#2ecc71", outline="#27ae60", width=3)
 
     return img
 
@@ -62,10 +70,18 @@ class TrayManager:
         icon = self._build_icon()
         self._thread = threading.Thread(target=icon.run, daemon=True)
         self._thread.start()
+
     def update_state(self, state: AppState) -> None:
-        """Update the icon image based on application state."""
+        """Thread-safe update of the icon image based on application state."""
         if self._icon is not None:
-            self._icon.icon = create_tray_icon_image(state)
+            def _update():
+                try:
+                    self._icon.icon = create_tray_icon_image(state)
+                except Exception as e:
+                    logger.debug("Tray icon update exception: %s", e)
+                return False
+
+            GLib.idle_add(_update)
 
     def stop(self) -> None:
         """Stop tray icon."""

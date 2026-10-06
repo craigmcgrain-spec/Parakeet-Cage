@@ -178,6 +178,10 @@ enabled = true
 hits = 0                          # maintained by the app
 ```
 
+Edit it with any editor. Comments, spacing and ordering are preserved — the app rewrites only the
+`hits = N` values, in place, and only when a correction actually happened. Entries are read when
+the daemon starts, so **restart Parakeet Cage to pick up your changes**.
+
 Matching is case-insensitive and whole-word only, and it is deliberately tiered:
 
 | tier | when it applies |
@@ -286,7 +290,7 @@ python3 -m pytest -q          # 99 tests
 
 | Path | Contents |
 |---|---|
-| `parakeet_cage/` | application package (config, audio, ASR, hotkeys, clipboard, tray, GTK settings) |
+| `parakeet_cage/` | application package (config, audio, ASR, hotkeys, clipboard, tray, GTK settings, text post-processing) |
 | `tests/` | pytest suite, including a fake-bus portal session harness |
 | `packaging/` | AppImage build script and desktop entry |
 | `docs/superpowers/` | design spec and implementation plan |

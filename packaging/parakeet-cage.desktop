@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Parakeet Cage
+Comment=Ultra-fast local speech-to-text dictation
+Exec=parakeet-cage
+Icon=parakeet-cage
+Categories=Utility;Audio;
+Terminal=false

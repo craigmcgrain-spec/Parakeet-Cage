@@ -50,7 +50,16 @@ the clipboard.
 - `Config` gained a `TextConfig` section, and the settings dialog now uses
   `ui.build_config()` (dataclass `replace`) so saving hotkeys no longer resets the `[text]`
   section to defaults.
-- Test suite grew from 38 to 97 tests, including fixtures taken from real measured model output.
+- Test suite grew from 38 to 102 tests, including fixtures taken from real measured model output.
+
+### Fixed
+
+- A refused global-hotkey grab is reported instead of being claimed as a success. python-xlib
+  only *prints* asynchronous errors such as `BadAccess` from `XGrabKey` and `sync()` returns
+  normally, so the listener logged `Registered global record hotkey: 'F9'` while another
+  application (typically a second Parakeet Cage instance) held the key — dictation then silently
+  never triggered. Grabs now run with an armed X error recorder; a refusal logs an actionable
+  error naming the key, and `HotkeyListener.unavailable_hotkeys` records it.
 
 ### Notes
 

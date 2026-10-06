@@ -254,8 +254,12 @@ busctl --user introspect org.freedesktop.portal.Desktop /org/freedesktop/portal/
 **First dictation is slow (~2 s) and/or asks for permission.** The portal session is created once
 per run; afterwards pastes are immediate.
 
-**Hotkey does nothing.** The grab happens on `$DISPLAY` (Xwayland on Wayland). Check the daemon log
-for `Registered global record hotkey`.
+**Hotkey does nothing.** The grab happens on `$DISPLAY` (Xwayland on Wayland). Check the daemon
+log for `Registered global record hotkey`; if instead it reports
+`Could not register the record hotkey 'F9': the X server refused the grab (BadAccess…)`, another
+application already holds that key — usually a second Parakeet Cage instance (the AppImage plus a
+source checkout, for example). Only one instance can own a global hotkey, and the second one will
+not dictate until the first exits.
 
 **`Local model weights not found`.** Put `model.safetensors` + `config.json` in one of the search
 paths above.

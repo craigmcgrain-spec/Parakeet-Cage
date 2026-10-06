@@ -4,7 +4,7 @@ from enum import Enum, auto
 import logging
 import threading
 import time
-from typing import Callable, Optional
+from typing import Callable, List, Optional, Set
 
 import Xlib
 from Xlib import X, XK
@@ -89,6 +89,44 @@ def parse_hotkey(hotkey_str: str, display: Display):
     return keycode, modifiers
 
 
+class _XErrorRecorder:
+    """Captures X protocol errors raised while grabbing keys.
+
+    python-xlib only *prints* asynchronous errors such as BadAccess from XGrabKey; sync()
+    returns normally. A grab that another client already holds therefore looks like a
+    success. Arming the recorder around a grab attempt makes that checkable; while it is
+    not armed, errors are passed on unchanged.
+    """
+
+    def __init__(self) -> None:
+        self._errors: List[object] = []
+        self._armed = False
+        self._previous: Optional[Callable] = None
+
+    def attach(self, display) -> None:
+        self._previous = getattr(display, "error_handler", None)
+        display.set_error_handler(self)
+
+    def arm(self) -> None:
+        self._errors.clear()
+        self._armed = True
+
+    def disarm(self) -> List[object]:
+        """Stop capturing and hand back what was captured (one shot)."""
+        self._armed = False
+        errors, self._errors = self._errors, []
+        return errors
+
+    def __call__(self, error, request) -> None:
+        if self._armed:
+            self._errors.append(error)
+            return
+        if callable(self._previous):
+            self._previous(error, request)
+        else:
+            logger.debug("Unhandled X protocol error: %s", error)
+
+
 class HotkeyListener:
     """Listens for global key combinations."""
 
@@ -105,6 +143,8 @@ class HotkeyListener:
         self._thread: Optional[threading.Thread] = None
         self._disp: Optional[Display] = None
         self._last_press_time: float = 0.0
+        self._errors = _XErrorRecorder()
+        self.unavailable_hotkeys: Set[str] = set()
 
     def start(self) -> None:
         if self._running:
@@ -137,6 +177,7 @@ class HotkeyListener:
                     logger.warning("Could not map hotkey '%s'", hotkey)
                     continue
 
+                self._errors.arm()
                 for var in mod_variants:
                     root.grab_key(
                         keycode,
@@ -146,8 +187,21 @@ class HotkeyListener:
                         X.GrabModeAsync,
                     )
                 disp.sync()
+                refused = self._errors.disarm()
+                if refused:
+                    self.unavailable_hotkeys.add(hotkey)
+                    logger.error(
+                        "Could not register the %s hotkey '%s': the X server refused the grab "
+                        "(%s: %s). Another application is probably holding it - is Parakeet Cage "
+                        "already running? Dictation will not trigger until the key is free.",
+                        name, hotkey, type(refused[0]).__name__, refused[0],
+                    )
+                    continue
+
+                self.unavailable_hotkeys.discard(hotkey)
                 logger.info("Registered global %s hotkey: '%s' (keycode=%s)", name, hotkey, keycode)
             except Exception as e:
+                self._errors.disarm()
                 logger.error("Failed to grab key for '%s': %s", hotkey, e)
 
     def _run_loop(self) -> None:
@@ -156,6 +210,7 @@ class HotkeyListener:
         except Exception as e:
             logger.error("Could not connect to X/Xwayland display for global hotkeys: %s", e)
             return
+        self._errors.attach(self._disp)
 
         disp = self._disp
         self._grab_keys(disp)

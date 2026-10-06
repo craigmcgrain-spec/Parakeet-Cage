@@ -69,7 +69,8 @@ def copy_to_clipboard(text: str) -> None:
 
 
 def trigger_paste_keystroke() -> None:
-    """Simulate Ctrl+V keystroke if tools are installed."""
+    """Simulate Ctrl+V keystroke to paste clipboard into active window."""
+    # 1. External command utilities if installed
     if shutil.which("wtype"):
         try:
             subprocess.run(["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"], check=False)
@@ -91,10 +92,24 @@ def trigger_paste_keystroke() -> None:
         except Exception:
             pass
 
+    # 2. Python pynput keyboard controller
+    try:
+        from pynput.keyboard import Controller, Key
+        kb = Controller()
+        kb.press(Key.ctrl)
+        kb.press('v')
+        time.sleep(0.02)
+        kb.release('v')
+        kb.release(Key.ctrl)
+        logger.info("Simulated Ctrl+V paste keystroke via pynput.")
+        return
+    except Exception as e:
+        logger.debug("pynput keystroke simulation failed: %s", e)
+
 
 def paste_text(text: str) -> None:
-    """Write text to clipboard and attempt keystroke paste."""
+    """Write text to clipboard and simulate Ctrl+V keystroke."""
     copy_to_clipboard(text)
-    # Give the compositor a moment to process the clipboard buffer before triggering paste
-    time.sleep(0.05)
+    # Small pause to allow the desktop clipboard manager to register content
+    time.sleep(0.08)
     trigger_paste_keystroke()

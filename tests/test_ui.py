@@ -1,13 +1,18 @@
-"""Tests for parakeet_cage.ui using GTK 3."""
+"""Tests for parakeet_cage.ui."""
 
 import gi
-try:
-    gi.require_version("Gtk", "3.0")
-except ValueError:
-    pass
+gi.require_version("Gdk", "3.0")
+gi.require_version("Gtk", "3.0")
 from gi.repository import Gdk
 
-from parakeet_cage.ui import event_to_hotkey_string
+from parakeet_cage.ui import event_to_hotkey_string, get_input_devices
+
+
+def test_get_input_devices_returns_non_empty_list():
+    devices = get_input_devices()
+    assert len(devices) >= 1
+    # First item is always default
+    assert devices[0][1] == ""
 
 
 def test_event_to_hotkey_string_single_f_key():

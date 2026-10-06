@@ -1,18 +1,37 @@
-"""Settings dialog via GTK 3."""
+"""Settings dialog via GTK 3 with audio device dropdown."""
 
 import logging
-from typing import Callable, Optional
+from typing import Callable, List, Optional, Tuple
 
 import gi
 try:
+    gi.require_version("Gdk", "3.0")
     gi.require_version("Gtk", "3.0")
 except ValueError:
     pass
 from gi.repository import Gdk, GLib, Gtk
+import sounddevice
 
 from parakeet_cage.config import Config
 
 logger = logging.getLogger(__name__)
+
+
+def get_input_devices() -> List[Tuple[str, str]]:
+    """Return list of (display_label, device_name_or_id) for audio input devices."""
+    devices = [("Default System Microphone", "")]
+    seen_names = set()
+    try:
+        device_list = sounddevice.query_devices()
+        for d in device_list:
+            if d.get("max_input_channels", 0) > 0:
+                name = d.get("name", "")
+                if name and name not in seen_names:
+                    seen_names.add(name)
+                    devices.append((name, name))
+    except Exception as e:
+        logger.warning("Could not query sound devices: %s", e)
+    return devices
 
 
 def event_to_hotkey_string(keyval: int, state: int) -> Optional[str]:
@@ -52,7 +71,7 @@ def event_to_hotkey_string(keyval: int, state: int) -> Optional[str]:
 
 
 class SettingsWindow:
-    """GTK 3 Settings dialog with interactive key capturing."""
+    """GTK 3 Settings dialog with interactive key capturing and device selector."""
 
     def __init__(self, cfg: Config, on_save: Callable[[Config], None]):
         self.cfg = cfg
@@ -68,7 +87,7 @@ class SettingsWindow:
 
     def _create_and_show(self) -> bool:
         dialog = Gtk.Window(title="Parakeet Cage Settings")
-        dialog.set_default_size(440, 240)
+        dialog.set_default_size(500, 280)
         dialog.set_position(Gtk.WindowPosition.CENTER)
         dialog.set_border_width(16)
 
@@ -91,21 +110,36 @@ class SettingsWindow:
         quit_btn.connect("clicked", lambda b: self._start_listening(b, "quit"))
         grid.attach(quit_btn, 1, 1, 1, 1)
 
+        # Audio Device Dropdown
+        audio_label = Gtk.Label(label="Audio Input Device:", xalign=0)
+        grid.attach(audio_label, 0, 2, 1, 1)
+
+        device_combo = Gtk.ComboBoxText()
+        devices = get_input_devices()
+        active_idx = 0
+
+        for idx, (label, val) in enumerate(devices):
+            device_combo.append(val, label)
+            if val == self.cfg.audio_device or (not self.cfg.audio_device and val == ""):
+                active_idx = idx
+
+        device_combo.set_active(active_idx)
+        grid.attach(device_combo, 1, 2, 1, 1)
+
         # Model Path
-        model_label = Gtk.Label(label="Model Path:", xalign=0)
-        grid.attach(model_label, 0, 2, 1, 1)
+        model_label = Gtk.Label(label="Speech Model:", xalign=0)
+        grid.attach(model_label, 0, 3, 1, 1)
 
         model_entry = Gtk.Entry()
-        model_entry.set_text(self.cfg.model_path)
-        grid.attach(model_entry, 1, 2, 1, 1)
+        model_entry.set_text(self.cfg.model_path or "moondream/parakeet-redux")
+        grid.attach(model_entry, 1, 3, 1, 1)
 
-        # Audio Device
-        audio_label = Gtk.Label(label="Audio Device:", xalign=0)
-        grid.attach(audio_label, 0, 3, 1, 1)
-
-        audio_entry = Gtk.Entry()
-        audio_entry.set_text(self.cfg.audio_device)
-        grid.attach(audio_entry, 1, 3, 1, 1)
+        model_hint = Gtk.Label(
+            label="<small><i>HuggingFace repo ID or local checkpoint path</i></small>",
+            use_markup=True,
+            xalign=0,
+        )
+        grid.attach(model_hint, 1, 4, 1, 1)
 
         # Buttons
         bbox = Gtk.ButtonBox(orientation=Gtk.Orientation.HORIZONTAL)
@@ -116,11 +150,12 @@ class SettingsWindow:
         cancel_btn = Gtk.Button(label="Cancel")
 
         def on_save_clicked(_):
+            selected_device_id = device_combo.get_active_id() or ""
             new_cfg = Config(
                 record_hotkey=self._record_hotkey.strip(),
                 quit_hotkey=self._quit_hotkey.strip(),
                 model_path=model_entry.get_text().strip(),
-                audio_device=audio_entry.get_text().strip(),
+                audio_device=selected_device_id,
             )
             self.cfg = new_cfg
             self.on_save(new_cfg)
@@ -131,7 +166,7 @@ class SettingsWindow:
 
         bbox.pack_start(cancel_btn, False, False, 0)
         bbox.pack_start(save_btn, False, False, 0)
-        grid.attach(bbox, 0, 4, 2, 1)
+        grid.attach(bbox, 0, 5, 2, 1)
 
         dialog.connect("key-press-event", self._on_key_press)
         dialog.show_all()

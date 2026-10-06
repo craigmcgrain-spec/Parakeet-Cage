@@ -77,7 +77,8 @@ class Application:
         def on_save(new_cfg: Config):
             self.config = new_cfg
             save_config(new_cfg, self.config_path)
-            logger.info("Saved configuration.")
+            self.hotkeys.update_hotkeys(new_cfg.record_hotkey, new_cfg.quit_hotkey)
+            logger.info("Saved configuration and updated hotkeys.")
 
         win = SettingsWindow(self.config, on_save=on_save)
         win.show()

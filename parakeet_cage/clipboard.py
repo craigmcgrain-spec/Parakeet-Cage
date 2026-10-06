@@ -14,41 +14,37 @@ class PasteError(Exception):
 
 
 def copy_to_clipboard(text: str) -> None:
-    """Copy text to system clipboard across Wayland and X11."""
-    # 1. Try wl-copy (Wayland native)
+    """Copy text to system clipboard across KDE Plasma, Wayland wl-copy, and X11."""
+    # 1. Native KDE Plasma Klipper D-Bus (Instant on KDE Wayland)
+    try:
+        import dbus
+        bus = dbus.SessionBus()
+        klipper = bus.get_object("org.kde.klipper", "/klipper")
+        iface = dbus.Interface(klipper, "org.kde.klipper.klipper")
+        iface.setClipboardContents(text)
+        logger.info("Copied '%s' via KDE Klipper D-Bus", text)
+    except Exception as e:
+        logger.debug("KDE Klipper copy failed: %s", e)
+
+    # 2. Native Wayland wl-copy
     if shutil.which("wl-copy"):
         try:
             p = subprocess.Popen(["wl-copy"], stdin=subprocess.PIPE)
             p.communicate(input=text.encode("utf-8"), timeout=2)
             if p.returncode == 0:
                 logger.info("Copied '%s' via wl-copy", text)
-                return
         except Exception as e:
             logger.debug("wl-copy failed: %s", e)
 
-    # 2. Try xclip (X11 / Xwayland)
+    # 3. Native X11 xclip
     if shutil.which("xclip"):
         try:
             p = subprocess.Popen(["xclip", "-selection", "clipboard"], stdin=subprocess.PIPE)
             p.communicate(input=text.encode("utf-8"), timeout=2)
-            if p.returncode == 0:
-                logger.info("Copied '%s' via xclip", text)
-                return
         except Exception as e:
             logger.debug("xclip failed: %s", e)
 
-    # 3. Try xsel
-    if shutil.which("xsel"):
-        try:
-            p = subprocess.Popen(["xsel", "--clipboard", "--input"], stdin=subprocess.PIPE)
-            p.communicate(input=text.encode("utf-8"), timeout=2)
-            if p.returncode == 0:
-                logger.info("Copied '%s' via xsel", text)
-                return
-        except Exception as e:
-            logger.debug("xsel failed: %s", e)
-
-    # 4. Fallback to GTK Clipboard in memory
+    # 4. In-process GTK Clipboard
     try:
         import gi
         try:
@@ -60,17 +56,17 @@ def copy_to_clipboard(text: str) -> None:
         clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
         clipboard.set_text(text, -1)
         clipboard.store()
-        logger.info("Copied '%s' via Gtk.Clipboard", text)
-        return
+        # Also store to primary selection (middle click buffer)
+        primary = Gtk.Clipboard.get(Gdk.SELECTION_PRIMARY)
+        primary.set_text(text, -1)
+        primary.store()
     except Exception as e:
         logger.debug("Gtk clipboard fallback failed: %s", e)
-
-    raise PasteError("No supported clipboard utility found (wl-copy, xclip, xsel, or Gtk).")
 
 
 def trigger_paste_keystroke() -> None:
     """Simulate Ctrl+V keystroke to paste clipboard into active window."""
-    # 1. External command utilities if installed
+    # 1. External command utilities
     if shutil.which("wtype"):
         try:
             subprocess.run(["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"], check=False)
@@ -98,11 +94,10 @@ def trigger_paste_keystroke() -> None:
         kb = Controller()
         kb.press(Key.ctrl)
         kb.press('v')
-        time.sleep(0.02)
+        time.sleep(0.03)
         kb.release('v')
         kb.release(Key.ctrl)
         logger.info("Simulated Ctrl+V paste keystroke via pynput.")
-        return
     except Exception as e:
         logger.debug("pynput keystroke simulation failed: %s", e)
 
@@ -110,6 +105,5 @@ def trigger_paste_keystroke() -> None:
 def paste_text(text: str) -> None:
     """Write text to clipboard and simulate Ctrl+V keystroke."""
     copy_to_clipboard(text)
-    # Small pause to allow the desktop clipboard manager to register content
     time.sleep(0.08)
     trigger_paste_keystroke()

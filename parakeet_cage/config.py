@@ -2,8 +2,23 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 import tomllib
+
+
+@dataclass
+class TextConfig:
+    """Transcript post-processing: spoken punctuation and the personal dictionary.
+
+    `punctuation_extra` maps a spoken command to a symbol; an empty string disables a
+    built-in command, and any new key adds one.
+    """
+
+    punctuation: bool = True
+    punctuation_extra: Dict[str, str] = field(default_factory=dict)
+    lexicon: bool = True
+    lexicon_path: str = ""
+    lexicon_max_distance: int = 2
 
 
 @dataclass
@@ -14,6 +29,7 @@ class Config:
     audio_device: str = ""
     device: str = "cpu"
     model_path: Optional[str] = None
+    text: TextConfig = field(default_factory=TextConfig)
 
     def __post_init__(self):
         if self.model_path is not None:
@@ -29,6 +45,8 @@ def load_config(path: Path) -> Config:
     with open(path, "rb") as f:
         data = tomllib.load(f)
     model_val = data.get("model", {}).get("path", "models/parakeet-redux")
+    text_data = data.get("text", {}) or {}
+    punctuation_extra = text_data.get("punctuation_extra") or {}
     return Config(
         record_hotkey=data.get("hotkeys", {}).get("record", "f9"),
         quit_hotkey=data.get("hotkeys", {}).get("quit", "ctrl+shift+q"),
@@ -36,6 +54,13 @@ def load_config(path: Path) -> Config:
         model_path=model_val,
         audio_device=data.get("audio", {}).get("device", ""),
         device=data.get("model", {}).get("device", "cpu"),
+        text=TextConfig(
+            punctuation=bool(text_data.get("punctuation", True)),
+            punctuation_extra={str(key): str(value) for key, value in punctuation_extra.items()},
+            lexicon=bool(text_data.get("lexicon", True)),
+            lexicon_path=str(text_data.get("lexicon_path", "")),
+            lexicon_max_distance=int(text_data.get("lexicon_max_distance", 2)),
+        ),
     )
 
 
@@ -51,3 +76,11 @@ def save_config(cfg: Config, path: Path) -> None:
         f.write(f'device = "{cfg.device}"\n')
         f.write("\n[audio]\n")
         f.write(f'device = "{cfg.audio_device}"\n')
+        f.write("\n[text]\n")
+        f.write(f"punctuation = {'true' if cfg.text.punctuation else 'false'}\n")
+        f.write(f"lexicon = {'true' if cfg.text.lexicon else 'false'}\n")
+        f.write(f'lexicon_path = "{cfg.text.lexicon_path}"\n')
+        f.write(f"lexicon_max_distance = {cfg.text.lexicon_max_distance}\n")
+        f.write("\n[text.punctuation_extra]\n")
+        for command, symbol in cfg.text.punctuation_extra.items():
+            f.write(f'"{command}" = "{symbol}"\n')

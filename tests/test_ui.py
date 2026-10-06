@@ -5,7 +5,8 @@ gi.require_version("Gdk", "3.0")
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gdk
 
-from parakeet_cage.ui import event_to_hotkey_string, get_input_devices
+from parakeet_cage.config import Config, TextConfig
+from parakeet_cage.ui import build_config, event_to_hotkey_string, get_input_devices
 
 
 def test_get_input_devices_returns_non_empty_list():
@@ -34,3 +35,15 @@ def test_event_to_hotkey_string_escape():
 def test_event_to_hotkey_string_modifier_only_ignored():
     val = Gdk.keyval_from_name("Control_L")
     assert event_to_hotkey_string(val, Gdk.ModifierType.CONTROL_MASK) is None
+
+
+def test_build_config_preserves_unrelated_settings():
+    """Saving from the dialog must not wipe the [text] section."""
+    base = Config(text=TextConfig(punctuation=False, lexicon_max_distance=3, lexicon_path="/tmp/l.toml"))
+
+    built = build_config(base, record_hotkey="alt+f9", quit_hotkey="alt+f10",
+                         model_path="/tmp/m", audio_device="usb")
+
+    assert built.text == base.text
+    assert built.record_hotkey == "alt+f9"
+    assert built.audio_device == "usb"

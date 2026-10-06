@@ -1,5 +1,6 @@
 """Settings dialog via GTK 3 with audio device dropdown."""
 
+from dataclasses import replace
 import logging
 from typing import Callable, List, Optional, Tuple
 
@@ -68,6 +69,28 @@ def event_to_hotkey_string(keyval: int, state: int) -> Optional[str]:
     if modifiers:
         return "+".join(modifiers + [final_key])
     return final_key
+
+
+def build_config(
+    base: Config,
+    record_hotkey: str,
+    quit_hotkey: str,
+    model_path: str,
+    audio_device: str,
+) -> Config:
+    """Config with the dialog's fields replaced, preserving everything else.
+
+    Dataclass `replace` keeps sections the dialog does not edit (the [text] section)
+    instead of silently resetting them to their defaults.
+    """
+    return replace(
+        base,
+        record_hotkey=record_hotkey.strip(),
+        quit_hotkey=quit_hotkey.strip(),
+        model_path=model_path.strip(),
+        speech_model=model_path.strip() or base.speech_model,
+        audio_device=audio_device.strip(),
+    )
 
 
 class SettingsWindow:
@@ -151,10 +174,11 @@ class SettingsWindow:
 
         def on_save_clicked(_):
             selected_device_id = device_combo.get_active_id() or ""
-            new_cfg = Config(
-                record_hotkey=self._record_hotkey.strip(),
-                quit_hotkey=self._quit_hotkey.strip(),
-                model_path=model_entry.get_text().strip(),
+            new_cfg = build_config(
+                self.cfg,
+                record_hotkey=self._record_hotkey,
+                quit_hotkey=self._quit_hotkey,
+                model_path=model_entry.get_text(),
                 audio_device=selected_device_id,
             )
             self.cfg = new_cfg

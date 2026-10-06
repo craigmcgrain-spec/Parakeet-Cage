@@ -1,17 +1,21 @@
 """Main application orchestrator."""
 
+import argparse
 import logging
 import os
 from pathlib import Path
 import sys
 import threading
-from typing import Optional
+import tomllib
+from typing import Optional, Sequence
 
+from parakeet_cage import __version__
 from parakeet_cage.audio import AudioRecorder
 from parakeet_cage.clipboard import paste_text
 from parakeet_cage.config import Config, load_config, save_config
 from parakeet_cage.hotkey import AppState, HotkeyListener, StateMachine
-from parakeet_cage.transcriber import Transcriber
+from parakeet_cage.postprocess import Change, build_pipeline, default_queue_path
+from parakeet_cage.transcriber import Transcriber, resolve_local_model_path
 from parakeet_cage.tray import TrayManager
 from parakeet_cage.ui import SettingsWindow
 
@@ -31,6 +35,8 @@ class Application:
 
         self.recorder = AudioRecorder()
         self.transcriber = Transcriber()
+        self.pipeline = build_pipeline(self.config.text, tokenizer_path=self._tokenizer_path())
+        self._last_change: Optional[Change] = None
 
         self.state_machine = StateMachine(
             on_start_record=self._on_start_record,
@@ -47,7 +53,17 @@ class Application:
         self.tray = TrayManager(
             on_settings=self._open_settings,
             on_quit=self.quit,
+            on_undo=self.undo_last_correction,
+            can_undo=self.has_correction_to_undo,
         )
+
+    def _tokenizer_path(self) -> Optional[Path]:
+        """The model's tokenizer, used to tell known words from misheard ones."""
+        try:
+            return resolve_local_model_path(self.config.speech_model) / "tokenizer.json"
+        except Exception as e:
+            logger.debug("No local model directory for tokenizer lookup: %s", e)
+            return None
 
     def _on_start_record(self) -> None:
         logger.info("[APP] Record hotkey pressed -> Switching to RECORDING (Red)")
@@ -70,7 +86,7 @@ class Application:
                     text = self.transcriber.transcribe(audio_data)
                     logger.info("[APP] Model transcription result: '%s'", text)
                     if text:
-                        paste_text(text)
+                        paste_text(self._postprocess(text))
             except Exception as e:
                 logger.exception("[APP] Error during transcription/paste execution: %s", e)
             finally:
@@ -79,6 +95,44 @@ class Application:
                 self.tray.update_state(AppState.IDLE)
 
         threading.Thread(target=transcribe_job, daemon=True).start()
+
+    def _postprocess(self, text: str) -> str:
+        """Spoken punctuation + personal dictionary. Never breaks dictation."""
+        try:
+            change = self.pipeline.process(text)
+        except Exception as e:
+            logger.warning("[APP] Text post-processing failed (%s); pasting the raw transcript", e)
+            self._last_change = None
+            return text
+
+        self._last_change = change
+        if change.corrected:
+            logger.info("[APP] Corrected transcript: '%s' -> '%s'", change.raw, change.final)
+            for applied in change.applied:
+                logger.info("[APP]   %r -> %r (%s, '%s')", applied.before, applied.after,
+                            applied.method, applied.word)
+        for queued in change.queued:
+            logger.info("[APP] Dictionary candidate for review: %r might be %r (%s %d)",
+                        queued.token, queued.suggestion, queued.method, queued.distance)
+        try:
+            self.pipeline.record(change)
+        except Exception as e:
+            logger.warning("[APP] Could not persist dictionary state: %s", e)
+        return change.final
+
+    def has_correction_to_undo(self) -> bool:
+        """True when the last transcript was changed by the dictionary or punctuation."""
+        return bool(self._last_change is not None and self._last_change.corrected)
+
+    def undo_last_correction(self) -> bool:
+        """Paste the raw transcript again, as heard, and forget the correction."""
+        if not self.has_correction_to_undo():
+            return False
+        raw = self._last_change.raw
+        self._last_change = None
+        logger.info("[APP] Undoing last correction; re-pasting the transcript as heard")
+        paste_text(raw)
+        return True
 
     def _open_settings(self) -> None:
         def on_save(new_cfg: Config):
@@ -127,7 +181,48 @@ class Application:
         sys.exit(0)
 
 
-def main():
+def format_pending(queue_path: Path) -> str:
+    """Human-readable listing of dictionary candidates that were blocked by the guard."""
+    path = Path(queue_path)
+    if not path.exists():
+        return "No candidates awaiting review."
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return f"Could not read {path}: {e}"
+
+    rows = data.get("candidate", [])
+    if not rows:
+        return "No candidates awaiting review."
+
+    lines = [f"{len(rows)} candidate(s) in {path}", ""]
+    for row in rows:
+        lines.append(
+            f'  heard "{row.get("heard")}" -> "{row.get("suggested")}"'
+            f'  ({row.get("method")}, distance {row.get("distance")}, seen {row.get("count", 1)}x)'
+        )
+    lines.append("")
+    lines.append("Looks right? Add it to the lexicon file as `[[word]] word = \"...\" aliases = [\"...\"]`.")
+    return "\n".join(lines)
+
+
+def main(argv: Optional[Sequence[str]] = None) -> None:
+    parser = argparse.ArgumentParser(
+        prog="parakeet-cage",
+        description="Push-to-talk dictation with fully local speech recognition.",
+    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument(
+        "--pending",
+        action="store_true",
+        help="list dictionary words that need confirming, then exit",
+    )
+    args = parser.parse_args(argv)
+
+    if args.pending:
+        print(format_pending(default_queue_path()))
+        return
+
     app = Application()
     app.run()
 

@@ -45,18 +45,30 @@ class TrayManager:
         self,
         on_settings: Callable[[], None],
         on_quit: Callable[[], None],
+        on_undo: Optional[Callable[[], bool]] = None,
+        can_undo: Optional[Callable[[], bool]] = None,
     ):
         self._on_settings = on_settings
         self._on_quit = on_quit
+        self._on_undo = on_undo
+        self._can_undo = can_undo or (lambda: False)
         self._icon: Optional[pystray.Icon] = None
         self._thread: Optional[threading.Thread] = None
 
     def _build_icon(self) -> pystray.Icon:
         image = create_tray_icon_image(AppState.IDLE)
-        menu = pystray.Menu(
-            pystray.MenuItem("Settings", self._handle_settings),
-            pystray.MenuItem("Quit", self._handle_quit),
-        )
+        items = []
+        if self._on_undo is not None:
+            items.append(
+                pystray.MenuItem(
+                    "Undo last correction",
+                    self._handle_undo,
+                    enabled=lambda item: bool(self._can_undo()),
+                )
+            )
+        items.append(pystray.MenuItem("Settings", self._handle_settings))
+        items.append(pystray.MenuItem("Quit", self._handle_quit))
+        menu = pystray.Menu(*items)
         self._icon = pystray.Icon("parakeet-cage", image, "Parakeet Cage", menu)
         return self._icon
 
@@ -90,6 +102,10 @@ class TrayManager:
 
     def _handle_settings(self, icon, item) -> None:
         self._on_settings()
+
+    def _handle_undo(self, icon, item) -> None:
+        if self._on_undo is not None:
+            self._on_undo()
 
     def _handle_quit(self, icon, item) -> None:
         self._on_quit()

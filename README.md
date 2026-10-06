@@ -9,7 +9,7 @@ Powered by [**Moondream Parakeet Redux**](https://huggingface.co/moondream/parak
 
 ```mermaid
 flowchart LR
-  K[hold hotkey] --> R[record 48 kHz mono] --> P[resample to 16 kHz] --> A[local Parakeet ASR] --> V[Ctrl+V at the focused cursor]
+  K[hold hotkey] --> R[record 48 kHz mono] --> P[resample to 16 kHz] --> A[local Parakeet ASR] --> T[spoken punctuation + personal dictionary] --> V[Ctrl+V at the focused cursor]
 ```
 
 ## Features
@@ -26,6 +26,11 @@ flowchart LR
   keystroke cannot be delivered the transcription is deliberately *left on the clipboard* so you
   can paste it by hand.
 - **GTK3 settings dialog** for hotkeys (interactive capture, `Esc` to cancel) and the input device.
+- **Spoken punctuation**: say "question mark", "comma", "new paragraph" and the symbol is typed —
+  the model's own punctuation around the command is cleaned up rather than doubled.
+- **Personal dictionary**: teach it the names and jargon it keeps mishearing. Fuzzy matches apply
+  only to words the model does *not* know well, so "our" is never rewritten into "OAuth"; blocked
+  guesses are queued for review instead. Undo is one click away in the tray.
 - CPU inference, single process, no persistent window.
 
 ## Requirements
@@ -122,7 +127,86 @@ device = "cpu"
 
 [audio]
 device = ""                       # "" = system default input, or a device name/index
+
+[text]
+punctuation = true                # spoken commands -> symbols
+lexicon = true                    # personal dictionary
+lexicon_path = ""                 # "" = ~/.config/parakeet-cage/lexicon.toml
+lexicon_max_distance = 2          # edit distance for semi-confident matches
+
+[text.punctuation_extra]          # add commands, or disable one with ""
+"winky face" = ";-)"
+# period = "!"
 ```
+
+## Spoken punctuation and your own words
+
+Two stages run on every transcript, before it is pasted. Both are on by default and both can be
+switched off in `[text]`.
+
+### Spoken punctuation
+
+Say a command and the symbol is typed: `question mark` → `?`, `period` / `full stop` → `.`,
+`comma`, `semicolon`, `colon`, `exclamation mark` / `exclamation point` → `!`, `ellipsis`,
+`dash`, `hyphen`, `dot`, `at sign`, `underscore`, `slash`, `backslash`, `plus sign`, brackets,
+quotes, `new line`, `new paragraph`. Add your own in `[text.punctuation_extra]`; disable a
+built-in one by setting it to `""`.
+
+The model punctuates as it sees fit, so mapping the words is only half the job. Measured real
+outputs drive the repair rules:
+
+| The model produces | You get |
+|---|---|
+| `How are you question mark? See you tomorrow.` | `How are you? See you tomorrow.` |
+| `I sent the file period did you get it, question mark.` | `I sent the file. Did you get it?` |
+| `Is it Reddy question Mark?` | `Is it Reddy?` (commands match case-insensitively) |
+| `wow exclamation mark!` | `wow!` |
+
+Say `literal` before a command to leave it alone: `a literal period of time` stays a period.
+
+### Personal dictionary
+
+`~/.config/parakeet-cage/lexicon.toml` (created for you with the format documented):
+
+```toml
+schema_version = 1
+
+[[word]]
+word = "kestrel"                  # what gets typed
+aliases = ["castrell", "kestral"] # spellings the model produces instead
+enabled = true
+hits = 0                          # maintained by the app
+```
+
+Matching is case-insensitive and whole-word only, and it is deliberately tiered:
+
+| tier | when it applies |
+|---|---|
+| exact / alias | always |
+| edit distance ≤ `lexicon_max_distance` | only when the heard word is *rare* |
+| phonetic (consonant skeleton, *exactly* equal) | only when the heard word is *rare* |
+| one skeleton edit away, or blocked by the rarity guard | never applied — queued for review |
+
+Rarity is measured with the model's own tokenizer: words it knows cost one or two subword pieces
+(`our` 1, `socket` 2) while misheard rare words are spelled out (`castrell` 4, `parakita` 3). That
+is what stops `our → OAuth` and `Socket → WebSocket` from corrupting ordinary sentences — those
+are written to `~/.local/share/parakeet-cage/learning/pending.toml` for you to confirm instead.
+Skeleton *equality* is required for the same reason: `castle` is one skeleton edit from `kestrel`
+and was rewritten to it during end-to-end testing, so looser matches are now queued, never applied.
+
+```bash
+parakeet-cage --pending        # list queued candidates with how often each was seen
+```
+
+Copy the ones you agree with into the lexicon file; the next dictation uses them. After any
+transcript was changed, the tray menu offers **Undo last correction**, which re-pastes the
+transcript exactly as the model heard it.
+
+Honest limits: a dictionary **cannot** improve recognition on this model — the Parakeet TDT runtime
+refuses decoder hints (`"Parakeet TDT does not support an initial prompt"`, and unknown options such
+as `hotwords` are rejected), so a word list only rewrites text. On synthetic test speech, 7 of 12
+rare/technical words were recovered this way (2 already correct, 2 by edit distance, 3 by
+phonetics alone); the rest came back as unrelated real words and need review, not matching.
 
 ## How it works
 
@@ -179,10 +263,21 @@ paths above.
 **Quit hotkey conflicts.** Release the record hotkey before pressing the quit combination; only one
 hotkey is handled at a time.
 
+**A word keeps coming out wrong.** Add it to `~/.config/parakeet-cage/lexicon.toml`
+(`word` + the misspelling as an `alias`), or run `parakeet-cage --pending` to see what the app
+nearly corrected, and copy the entries you agree with. Run the daemon from a terminal to watch
+`Corrected transcript: ...` lines, or disable the stages entirely with `[text] punctuation = false`
+/ `lexicon = false`.
+
+**A correction landed that I did not want.** Tray menu → *Undo last correction* re-pastes the
+transcript as the model heard it, and the lexicon entry can be deleted or set `enabled = false`.
+Every queued guess lives in `pending.toml`; nothing is rewritten without either an exact match or a
+rarity-checked fuzzy match.
+
 ## Development
 
 ```bash
-python3 -m pytest -q          # 38 tests
+python3 -m pytest -q          # 99 tests
 ```
 
 | Path | Contents |

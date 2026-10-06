@@ -9,7 +9,9 @@ from parakeet_cage.clipboard import PasteError, copy_to_clipboard, paste_text
 
 
 def test_copy_to_clipboard_wl_copy():
-    with patch("shutil.which") as mock_which, patch("subprocess.Popen") as mock_popen:
+    with patch("dbus.SessionBus", side_effect=Exception("no dbus")), \
+         patch("shutil.which") as mock_which, \
+         patch("subprocess.Popen") as mock_popen:
         mock_which.side_effect = lambda cmd: "/usr/bin/wl-copy" if cmd == "wl-copy" else None
         proc = MagicMock()
         proc.returncode = 0
@@ -23,7 +25,9 @@ def test_copy_to_clipboard_wl_copy():
 
 
 def test_copy_to_clipboard_xclip_fallback():
-    with patch("shutil.which") as mock_which, patch("subprocess.Popen") as mock_popen:
+    with patch("dbus.SessionBus", side_effect=Exception("no dbus")), \
+         patch("shutil.which") as mock_which, \
+         patch("subprocess.Popen") as mock_popen:
         mock_which.side_effect = lambda cmd: "/usr/bin/xclip" if cmd == "xclip" else None
         proc = MagicMock()
         proc.returncode = 0
@@ -36,9 +40,12 @@ def test_copy_to_clipboard_xclip_fallback():
         assert args[0] == ["xclip", "-selection", "clipboard"]
 
 
-def test_paste_text_calls_copy():
-    with patch("parakeet_cage.clipboard.copy_to_clipboard") as mock_copy, \
+def test_paste_text_calls_copy_and_restores():
+    with patch("parakeet_cage.clipboard.get_current_clipboard", return_value="original text"), \
+         patch("parakeet_cage.clipboard.copy_to_clipboard") as mock_copy, \
          patch("parakeet_cage.clipboard.trigger_paste_keystroke") as mock_trigger:
         paste_text("test transcription")
-        mock_copy.assert_called_once_with("test transcription")
+        assert mock_copy.call_count == 2
+        mock_copy.assert_any_call("test transcription")
+        mock_copy.assert_any_call("original text")
         mock_trigger.assert_called_once()

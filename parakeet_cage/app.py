@@ -50,24 +50,31 @@ class Application:
         )
 
     def _on_start_record(self) -> None:
-        logger.info("Recording started...")
+        logger.info("[APP] Record hotkey pressed -> Switching to RECORDING (Red)")
         self.tray.update_state(AppState.RECORDING)
         self.recorder.start(device=self.config.audio_device)
 
     def _on_stop_record(self) -> None:
-        logger.info("Recording stopped. Transcribing...")
+        logger.info("[APP] Record hotkey released -> Switching to TRANSCRIBING (Amber)")
         self.tray.update_state(AppState.TRANSCRIBING)
         audio_data = self.recorder.stop()
 
         def transcribe_job():
             try:
-                text = self.transcriber.transcribe(audio_data)
-                if text:
-                    logger.info("Transcribed: %s", text)
-                    paste_text(text)
+                if not self.transcriber.ready:
+                    logger.warning("[APP] Transcriber engine not loaded yet!")
+                elif not audio_data:
+                    logger.warning("[APP] No audio data was recorded.")
+                else:
+                    logger.info("[APP] Running local speech inference on %d bytes of audio...", len(audio_data))
+                    text = self.transcriber.transcribe(audio_data)
+                    logger.info("[APP] Model transcription result: '%s'", text)
+                    if text:
+                        paste_text(text)
             except Exception as e:
-                logger.error("Error during transcribe/paste: %s", e)
+                logger.exception("[APP] Error during transcription/paste execution: %s", e)
             finally:
+                logger.info("[APP] Transcription complete -> Resetting state to IDLE (Green)")
                 self.state_machine.handle_transcribe_finished()
                 self.tray.update_state(AppState.IDLE)
 
@@ -84,17 +91,36 @@ class Application:
         win.show()
 
     def run(self) -> None:
-        """Initialize models and run background daemon."""
-        logger.info("Loading speech model: %s", self.config.model_path or "moondream/parakeet-redux")
-        self.transcriber.load(self.config.model_path or "moondream/parakeet-redux")
+        """Start all application services."""
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(message)s",
+            datefmt="%H:%M:%S",
+        )
+        logger.info("Starting Parakeet Cage application...")
 
+        # 1. Start hotkey listener
         self.hotkeys.start()
-        logger.info("Parakeet Cage is running. Ready for speech input.")
 
-        # Run the tray icon on the main thread loop
+        # 2. Warm up transcriber in background
+        def load_model():
+            try:
+                logger.info("Pre-warming local Parakeet ASR engine...")
+                self.transcriber.load(
+                    model_path=self.config.speech_model,
+                    device=self.config.device,
+                )
+                logger.info("Parakeet ASR engine is ready.")
+            except Exception as e:
+                logger.exception("Failed to load Parakeet speech model: %s", e)
+
+        threading.Thread(target=load_model, daemon=True).start()
+
+        # 3. Start tray on main loop
         self.tray.run()
 
     def quit(self) -> None:
+        """Graceful shutdown."""
         logger.info("Shutting down Parakeet Cage...")
         self.hotkeys.stop()
         self.tray.stop()
@@ -102,7 +128,6 @@ class Application:
 
 
 def main():
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     app = Application()
     app.run()
 

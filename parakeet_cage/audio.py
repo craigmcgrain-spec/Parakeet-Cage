@@ -1,9 +1,13 @@
-"""Mic capture via sounddevice."""
+"""Mic capture via sounddevice InputStream."""
 
+import logging
 import threading
+from typing import Optional
 
 import numpy as np
-import sounddevice
+import sounddevice as sd
+
+logger = logging.getLogger(__name__)
 
 
 class AudioRecorder:
@@ -11,40 +15,56 @@ class AudioRecorder:
 
     def __init__(self):
         self._buffer = bytearray()
-        self._stream = None
+        self._stream: Optional[sd.InputStream] = None
         self._lock = threading.Lock()
 
-    def start(self, device: str) -> None:
-        """Open a 16-bit PCM mono 16kHz stream for recording."""
+    def start(self, device: Optional[str] = None) -> None:
+        """Open a 16-bit PCM mono 16kHz InputStream for recording."""
         with self._lock:
             if self._stream is not None:
                 return
-            dtype = np.int16
-            channels = 1
+            self._buffer.clear()
             samplerate = 16000
+            channels = 1
+            dtype = np.int16
 
-            def callback(indata, frames, time_info, status, *args):
+            def callback(indata, frames, time_info, status):
+                if status:
+                    logger.debug("Audio callback status: %s", status)
                 self._buffer.extend(indata.tobytes())
 
-            self._stream = sounddevice.Stream(
-                samplerate=samplerate,
-                channels=channels,
-                dtype=dtype,
-                device=device if device else None,
-                callback=callback,
-            )
-            self._stream.start()
+            try:
+                # Convert numeric string index if configured
+                dev = int(device) if device and device.isdigit() else (device or None)
+                self._stream = sd.InputStream(
+                    samplerate=samplerate,
+                    channels=channels,
+                    dtype=dtype,
+                    device=dev,
+                    callback=callback,
+                )
+                self._stream.start()
+                logger.info("Audio recording stream started on device: %s", dev or "default")
+            except Exception as e:
+                logger.error("Failed to start audio stream: %s", e)
+                self._stream = None
 
     def stop(self) -> bytes:
         """Stop recording and return the accumulated PCM buffer."""
         with self._lock:
             if self._stream is None:
                 return b""
-            self._stream.stop()
-            self._stream.close()
-            self._stream = None
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception as e:
+                logger.error("Error stopping audio stream: %s", e)
+            finally:
+                self._stream = None
+
             data = bytes(self._buffer)
             self._buffer.clear()
+            logger.info("Audio recording captured %d bytes", len(data))
             return data
 
     @property

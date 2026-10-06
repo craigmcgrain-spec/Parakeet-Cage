@@ -4,7 +4,12 @@ import logging
 import os
 from pathlib import Path
 import tempfile
+import warnings
 import wave
+
+# Suppress harmless HuggingFace anonymous rate limit warnings
+warnings.filterwarnings("ignore", message=".*unauthenticated requests.*")
+logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 
 logger = logging.getLogger(__name__)
 
@@ -14,24 +19,40 @@ DEFAULT_LOCAL_CACHE = Path(
 ) / "parakeet-cage" / "hf_cache"
 
 
+def is_model_already_cached(model_identifier: str) -> bool:
+    """Check if model snapshot already exists in our dedicated cache."""
+    normalized_name = f"models--{model_identifier.replace('/', '--')}"
+    model_dir = DEFAULT_LOCAL_CACHE / "hub" / normalized_name / "snapshots"
+    if model_dir.exists():
+        snapshots = [s for s in model_dir.iterdir() if s.is_dir()]
+        if snapshots:
+            return True
+    return False
+
+
 def ensure_local_model_cached(model_identifier: str = "moondream/parakeet-redux") -> None:
-    """Download model files to dedicated local directory once if not present."""
+    """Download model files once if not already present in dedicated cache."""
     if os.path.isdir(model_identifier) or os.path.isfile(model_identifier):
         return
 
     DEFAULT_LOCAL_CACHE.mkdir(parents=True, exist_ok=True)
     os.environ["HF_HOME"] = str(DEFAULT_LOCAL_CACHE)
 
+    # If already cached locally, do not hit the remote HF Hub at all
+    if is_model_already_cached(model_identifier):
+        logger.info("Model '%s' is already stored locally. Running offline.", model_identifier)
+        return
+
     try:
         from huggingface_hub import snapshot_download
-        logger.info("Ensuring model '%s' is present in local storage: %s", model_identifier, DEFAULT_LOCAL_CACHE)
+        logger.info("Downloading model '%s' for offline use into %s...", model_identifier, DEFAULT_LOCAL_CACHE)
         snapshot_download(
             repo_id=model_identifier,
             cache_dir=str(DEFAULT_LOCAL_CACHE),
             local_files_only=False,
         )
     except Exception as e:
-        logger.warning("Could not pre-cache model (will attempt offline load): %s", e)
+        logger.warning("Could not pre-cache model: %s", e)
 
 
 class Transcriber:
@@ -44,7 +65,7 @@ class Transcriber:
         """Load the model via moondream.photon() using local cache."""
         model_name = model_path or "moondream/parakeet-redux"
 
-        # 1. Pre-cache to dedicated local cache directory
+        # 1. Download once if not already cached
         ensure_local_model_cached(model_name)
 
         # 2. Configure Hugging Face to run purely offline from local cache

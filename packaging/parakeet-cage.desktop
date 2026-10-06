@@ -1,8 +1,12 @@
 [Desktop Entry]
 Type=Application
+Version=1.0
 Name=Parakeet Cage
-Comment=Ultra-fast local speech-to-text dictation
+GenericName=Voice Dictation
+Comment=Push-to-talk dictation with fully local speech recognition
 Exec=parakeet-cage
 Icon=parakeet-cage
-Categories=Utility;Audio;
 Terminal=false
+StartupNotify=false
+Categories=Utility;AudioVideo;
+Keywords=dictation;speech;voice;transcription;parakeet;

@@ -1,162 +1,171 @@
-"""Settings dialog via tkinter with interactive key listener."""
+"""Settings dialog via GTK 3."""
 
 import logging
-import tkinter as tk
-from tkinter import ttk
 from typing import Callable, Optional
+
+import gi
+try:
+    gi.require_version("Gtk", "3.0")
+except ValueError:
+    pass
+from gi.repository import Gdk, GLib, Gtk
 
 from parakeet_cage.config import Config
 
 logger = logging.getLogger(__name__)
 
 
-def event_to_hotkey_string(event: tk.Event) -> Optional[str]:
-    """Convert a Tkinter KeyPress event into a standardized hotkey string."""
-    keysym = event.keysym.lower()
+def event_to_hotkey_string(keyval: int, state: int) -> Optional[str]:
+    """Convert GTK key event into standardized hotkey string."""
+    keyname = Gdk.keyval_name(keyval)
+    if not keyname:
+        return None
+    keyname = keyname.lower()
 
-    # If user pressed Escape alone, signal cancel/stop listening
-    if keysym == "escape":
+    if keyname == "escape":
         return "escape"
 
-    # Modifier keys alone should not complete the hotkey
-    if keysym in ("control_l", "control_r", "shift_l", "shift_r", "alt_l", "alt_r", "super_l", "super_r", "meta_l", "meta_r"):
+    # Ignore bare modifier presses
+    if keyname in ("control_l", "control_r", "shift_l", "shift_r", "alt_l", "alt_r", "super_l", "super_r", "meta_l", "meta_r"):
         return None
 
     modifiers = []
-    state = event.state
-
-    # Check modifier bitmasks
-    if state & 0x0004:  # Control
+    if state & Gdk.ModifierType.CONTROL_MASK:
         modifiers.append("ctrl")
-    if state & 0x0008:  # Alt / Mod1
+    if state & Gdk.ModifierType.MOD1_MASK:
         modifiers.append("alt")
-    if state & 0x0001:  # Shift
+    if state & Gdk.ModifierType.SHIFT_MASK:
         modifiers.append("shift")
-    if state & 0x0040:  # Super / Windows key
+    if state & Gdk.ModifierType.SUPER_MASK or state & Gdk.ModifierType.MOD4_MASK:
         modifiers.append("super")
 
-    # Map special keysyms to standard names
     key_map = {
         "return": "enter",
-        "prior": "page_up",
-        "next": "page_down",
+        "page_up": "page_up",
+        "page_down": "page_down",
     }
-    key_name = key_map.get(keysym, keysym)
+    final_key = key_map.get(keyname, keyname)
 
     if modifiers:
-        return "+".join(modifiers + [key_name])
-    return key_name
-
-
-class HotkeyButton(ttk.Button):
-    """Button that listens for a key combination on click and uses Esc to cancel."""
-
-    def __init__(self, parent, initial_value: str, on_changed: Callable[[str], None]):
-        self.value = initial_value
-        self.on_changed = on_changed
-        self._listening = False
-        super().__init__(parent, text=self.value or "None", command=self._start_listening)
-
-    def _start_listening(self):
-        if self._listening:
-            return
-        self._listening = True
-        self.config(text="Press keys... (Esc to cancel)")
-        self.focus_set()
-        self.bind("<KeyPress>", self._on_key_press)
-        self.bind("<FocusOut>", self._stop_listening)
-
-    def _stop_listening(self, event=None):
-        if not self._listening:
-            return
-        self._listening = False
-        self.config(text=self.value or "None")
-        self.unbind("<KeyPress>")
-        self.unbind("<FocusOut>")
-
-    def _on_key_press(self, event: tk.Event):
-        hotkey_str = event_to_hotkey_string(event)
-        if hotkey_str is None:
-            # Intermediate modifier key pressed, keep waiting
-            return "break"
-
-        if hotkey_str == "escape":
-            # Cancel listening, revert to existing value
-            self._stop_listening()
-            return "break"
-
-        # Valid key combo captured
-        self.value = hotkey_str
-        self.config(text=self.value)
-        self.on_changed(self.value)
-        self._stop_listening()
-        return "break"
+        return "+".join(modifiers + [final_key])
+    return final_key
 
 
 class SettingsWindow:
-    """Tkinter-based configuration window with hotkey recorder."""
+    """GTK 3 Settings dialog with interactive key capturing."""
 
     def __init__(self, cfg: Config, on_save: Callable[[Config], None]):
         self.cfg = cfg
         self.on_save = on_save
-        self._root: Optional[tk.Tk] = None
         self._record_hotkey = cfg.record_hotkey
         self._quit_hotkey = cfg.quit_hotkey
+        self._listening_btn: Optional[Gtk.Button] = None
+        self._listening_target: Optional[str] = None
 
     def show(self) -> None:
-        """Open settings window."""
-        root = tk.Tk()
-        self._root = root
-        root.title("Parakeet Cage Settings")
-        root.geometry("450x280")
-        root.resizable(False, False)
+        """Schedule GTK window on the GLib main loop."""
+        GLib.idle_add(self._create_and_show)
 
-        frame = ttk.Frame(root, padding="16")
-        frame.pack(fill=tk.BOTH, expand=True)
+    def _create_and_show(self) -> bool:
+        dialog = Gtk.Window(title="Parakeet Cage Settings")
+        dialog.set_default_size(440, 240)
+        dialog.set_position(Gtk.WindowPosition.CENTER)
+        dialog.set_border_width(16)
+
+        grid = Gtk.Grid(column_spacing=12, row_spacing=12)
+        dialog.add(grid)
 
         # Record Hotkey
-        ttk.Label(frame, text="Record Hotkey:").grid(row=0, column=0, sticky=tk.W, pady=6)
-        def on_record_change(val):
-            self._record_hotkey = val
-        rec_btn = HotkeyButton(frame, self._record_hotkey, on_changed=on_record_change)
-        rec_btn.grid(row=0, column=1, sticky=tk.EW, pady=6)
+        rec_label = Gtk.Label(label="Record Hotkey:", xalign=0)
+        grid.attach(rec_label, 0, 0, 1, 1)
+
+        rec_btn = Gtk.Button(label=self._record_hotkey or "None")
+        rec_btn.connect("clicked", lambda b: self._start_listening(b, "record"))
+        grid.attach(rec_btn, 1, 0, 1, 1)
 
         # Quit Hotkey
-        ttk.Label(frame, text="Quit Hotkey:").grid(row=1, column=0, sticky=tk.W, pady=6)
-        def on_quit_change(val):
-            self._quit_hotkey = val
-        quit_btn = HotkeyButton(frame, self._quit_hotkey, on_changed=on_quit_change)
-        quit_btn.grid(row=1, column=1, sticky=tk.EW, pady=6)
+        quit_label = Gtk.Label(label="Quit Hotkey:", xalign=0)
+        grid.attach(quit_label, 0, 1, 1, 1)
+
+        quit_btn = Gtk.Button(label=self._quit_hotkey or "None")
+        quit_btn.connect("clicked", lambda b: self._start_listening(b, "quit"))
+        grid.attach(quit_btn, 1, 1, 1, 1)
 
         # Model Path
-        ttk.Label(frame, text="Model Path:").grid(row=2, column=0, sticky=tk.W, pady=6)
-        model_entry = ttk.Entry(frame)
-        model_entry.insert(0, self.cfg.model_path)
-        model_entry.grid(row=2, column=1, sticky=tk.EW, pady=6)
+        model_label = Gtk.Label(label="Model Path:", xalign=0)
+        grid.attach(model_label, 0, 2, 1, 1)
+
+        model_entry = Gtk.Entry()
+        model_entry.set_text(self.cfg.model_path)
+        grid.attach(model_entry, 1, 2, 1, 1)
 
         # Audio Device
-        ttk.Label(frame, text="Audio Device:").grid(row=3, column=0, sticky=tk.W, pady=6)
-        audio_entry = ttk.Entry(frame)
-        audio_entry.insert(0, self.cfg.audio_device)
-        audio_entry.grid(row=3, column=1, sticky=tk.EW, pady=6)
+        audio_label = Gtk.Label(label="Audio Device:", xalign=0)
+        grid.attach(audio_label, 0, 3, 1, 1)
 
-        frame.columnconfigure(1, weight=1)
+        audio_entry = Gtk.Entry()
+        audio_entry.set_text(self.cfg.audio_device)
+        grid.attach(audio_entry, 1, 3, 1, 1)
 
-        def save_and_close():
+        # Buttons
+        bbox = Gtk.ButtonBox(orientation=Gtk.Orientation.HORIZONTAL)
+        bbox.set_layout(Gtk.ButtonBoxStyle.END)
+        bbox.set_spacing(8)
+
+        save_btn = Gtk.Button(label="Save")
+        cancel_btn = Gtk.Button(label="Cancel")
+
+        def on_save_clicked(_):
             new_cfg = Config(
                 record_hotkey=self._record_hotkey.strip(),
                 quit_hotkey=self._quit_hotkey.strip(),
-                model_path=model_entry.get().strip(),
-                audio_device=audio_entry.get().strip(),
+                model_path=model_entry.get_text().strip(),
+                audio_device=audio_entry.get_text().strip(),
             )
             self.cfg = new_cfg
             self.on_save(new_cfg)
-            root.destroy()
+            dialog.destroy()
 
-        btn_frame = ttk.Frame(frame)
-        btn_frame.grid(row=4, column=0, columnspan=2, pady=16)
+        save_btn.connect("clicked", on_save_clicked)
+        cancel_btn.connect("clicked", lambda _: dialog.destroy())
 
-        ttk.Button(btn_frame, text="Save", command=save_and_close).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btn_frame, text="Cancel", command=root.destroy).pack(side=tk.LEFT, padx=4)
+        bbox.pack_start(cancel_btn, False, False, 0)
+        bbox.pack_start(save_btn, False, False, 0)
+        grid.attach(bbox, 0, 4, 2, 1)
 
-        root.mainloop()
+        dialog.connect("key-press-event", self._on_key_press)
+        dialog.show_all()
+        return False
+
+    def _start_listening(self, button: Gtk.Button, target: str) -> None:
+        button.set_label("Press keys... (Esc to cancel)")
+        self._listening_target = target
+        self._listening_btn = button
+
+    def _on_key_press(self, widget, event) -> bool:
+        if not self._listening_btn:
+            return False
+
+        hotkey_str = event_to_hotkey_string(event.keyval, event.state)
+        if hotkey_str is None:
+            return True
+
+        if hotkey_str == "escape":
+            if self._listening_target == "record":
+                self._listening_btn.set_label(self._record_hotkey or "None")
+            else:
+                self._listening_btn.set_label(self._quit_hotkey or "None")
+            self._listening_btn = None
+            self._listening_target = None
+            return True
+
+        if self._listening_target == "record":
+            self._record_hotkey = hotkey_str
+            self._listening_btn.set_label(hotkey_str)
+        else:
+            self._quit_hotkey = hotkey_str
+            self._listening_btn.set_label(hotkey_str)
+
+        self._listening_btn = None
+        self._listening_target = None
+        return True

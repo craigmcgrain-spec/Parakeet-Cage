@@ -80,7 +80,7 @@ class Application:
             logger.info("Saved configuration.")
 
         win = SettingsWindow(self.config, on_save=on_save)
-        threading.Thread(target=win.show, daemon=True).start()
+        win.show()
 
     def run(self) -> None:
         """Initialize models and run background daemon."""

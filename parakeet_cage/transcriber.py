@@ -1,4 +1,4 @@
-"""ASR wrapper around moondream/parakeet-redux with local offline caching."""
+"""ASR wrapper around moondream/parakeet-redux with zero network / zero telemetry."""
 
 import logging
 import os
@@ -7,9 +7,11 @@ import tempfile
 import warnings
 import wave
 
-# Suppress harmless HuggingFace anonymous rate limit warnings
-warnings.filterwarnings("ignore", message=".*unauthenticated requests.*")
+# Suppress HuggingFace and Moondream telemetry network warnings
+warnings.filterwarnings("ignore")
 logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+logging.getLogger("kestrel").setLevel(logging.ERROR)
+logging.getLogger("httpx").setLevel(logging.ERROR)
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +19,35 @@ logger = logging.getLogger(__name__)
 DEFAULT_LOCAL_CACHE = Path(
     os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")
 ) / "parakeet-cage" / "hf_cache"
+
+
+def disable_moondream_telemetry() -> None:
+    """Disable background telemetry reporting and HF probes in Kestrel engine."""
+    try:
+        import kestrel.photon as kp
+        import kestrel.model_download as kmd
+
+        # 1. No-op API key validation and report uploads
+        async def dummy_validate(self):
+            return False
+
+        def dummy_start(self):
+            pass
+
+        async def dummy_stop(self):
+            pass
+
+        kp.PhotonReporter.validate_api_key = dummy_validate
+        kp.PhotonReporter.start = dummy_start
+        kp.PhotonReporter.stop = dummy_stop
+
+        # 2. Prevent background model config network probe threads
+        def dummy_probe(*args, **kwargs):
+            pass
+
+        kmd.probe_supported_model_configs = dummy_probe
+    except Exception as e:
+        logger.debug("Could not patch kestrel telemetry: %s", e)
 
 
 def is_model_already_cached(model_identifier: str) -> bool:
@@ -38,9 +69,8 @@ def ensure_local_model_cached(model_identifier: str = "moondream/parakeet-redux"
     DEFAULT_LOCAL_CACHE.mkdir(parents=True, exist_ok=True)
     os.environ["HF_HOME"] = str(DEFAULT_LOCAL_CACHE)
 
-    # If already cached locally, do not hit the remote HF Hub at all
     if is_model_already_cached(model_identifier):
-        logger.info("Model '%s' is already stored locally. Running offline.", model_identifier)
+        logger.info("Model '%s' is stored locally. Offline mode enabled.", model_identifier)
         return
 
     try:
@@ -56,29 +86,33 @@ def ensure_local_model_cached(model_identifier: str = "moondream/parakeet-redux"
 
 
 class Transcriber:
-    """Wraps the moondream photon ASR model running strictly locally."""
+    """Wraps the moondream photon ASR model running strictly locally and offline."""
 
     def __init__(self):
         self._speech = None
 
     def load(self, model_path: str = "moondream/parakeet-redux", device: str = "cpu") -> None:
-        """Load the model via moondream.photon() using local cache."""
+        """Load the model via moondream.photon() with full offline isolation."""
         model_name = model_path or "moondream/parakeet-redux"
 
-        # 1. Download once if not already cached
+        # 1. Ensure local files
         ensure_local_model_cached(model_name)
 
-        # 2. Configure Hugging Face to run purely offline from local cache
+        # 2. Kill all telemetry / remote background probes
+        disable_moondream_telemetry()
+
+        # 3. Configure Hugging Face to run strictly offline
         os.environ["HF_HOME"] = str(DEFAULT_LOCAL_CACHE)
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        os.environ["MOONDREAM_DISABLE_TELEMETRY"] = "1"
 
-        logger.info("Loading speech model '%s' offline from local storage...", model_name)
+        logger.info("Loading speech model '%s' locally...", model_name)
         import moondream as md
 
         self._speech = md.photon(model_name, device=device)
         self._speech.__enter__()
-        logger.info("Speech model '%s' loaded and ready.", model_name)
+        logger.info("Speech model '%s' loaded locally and offline.", model_name)
 
     def transcribe(self, audio: bytes) -> str:
         """Convert raw PCM (16-bit mono 16kHz) to a temp WAV and transcribe."""

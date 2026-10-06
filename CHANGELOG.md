@@ -54,6 +54,9 @@ the clipboard.
 
 ### Fixed
 
+- Updating hit counters no longer reformats the dictionary: only the `hits = N` values are
+  rewritten in place, so comments, ordering and formatting in a hand-edited `lexicon.toml`
+  survive. When an utterance changed nothing, the file is not written at all.
 - A refused global-hotkey grab is reported instead of being claimed as a success. python-xlib
   only *prints* asynchronous errors such as `BadAccess` from `XGrabKey` and `sync()` returns
   normally, so the listener logged `Registered global record hotkey: 'F9'` while another

@@ -170,6 +170,44 @@ def test_load_and_record_round_trip(tmp_path, counted):
     assert not list(tmp_path.glob("*.tmp"))
 
 
+def test_record_keeps_hand_written_comments(tmp_path, counted):
+    """The user hand-edits this file: updating counters must not reformat it."""
+    lexicon_path = tmp_path / "lexicon.toml"
+    lexicon_path.write_text(
+        "# my own notes: kestrel is the ASR engine\n"
+        "schema_version = 1\n"
+        "\n"
+        "[[word]]\n"
+        'word = "kestrel"          # what I say\n'
+        'aliases = ["castrell"]    # what it hears\n'
+        "enabled = true\n"
+        "hits = 0\n",
+        encoding="utf-8",
+    )
+    lex = Lexicon.load(lexicon_path, piece_cost=piece_counter_for(TOKENIZER))
+
+    lex.record(lex.apply("we use castrell daily"))
+
+    text = lexicon_path.read_text(encoding="utf-8")
+    assert "# my own notes" in text
+    assert "# what I say" in text
+    assert "hits = 1" in text
+
+
+def test_record_touches_nothing_when_nothing_changed(tmp_path, counted):
+    lexicon_path = tmp_path / "lexicon.toml"
+    lexicon_path.write_text(
+        "# notes\nschema_version = 1\n\n[[word]]\nword = \"kestrel\"\nhits = 0\n",
+        encoding="utf-8",
+    )
+    before = lexicon_path.read_bytes()
+    lex = Lexicon.load(lexicon_path, piece_cost=piece_counter_for(TOKENIZER))
+
+    lex.record(lex.apply("nothing to correct here"))
+
+    assert lexicon_path.read_bytes() == before
+
+
 def test_record_queues_blocked_candidates_once(tmp_path, counted):
     queue_path = tmp_path / "pending.toml"
     lex = counted([Entry(word="OAuth")], queue_path=queue_path)

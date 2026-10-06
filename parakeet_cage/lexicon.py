@@ -266,11 +266,51 @@ class Lexicon:
             lines.append("")
         return "\n".join(lines)
 
+    def _persist_hits(self, path: Path) -> None:
+        """Update only the `hits = N` values, in place.
+
+        The lexicon is a file the user hand-edits, so comments, formatting and ordering must
+        survive a counter update. Only a file we cannot line up is rewritten outright.
+        """
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            _write_atomic(path, self._entries_text())
+            return
+
+        blocks = list(re.finditer(r"^\[\[word\]\]", text, re.MULTILINE))
+        if len(blocks) != len(self.entries):
+            _write_atomic(path, self._entries_text())
+            return
+
+        pieces: List[str] = []
+        position = 0
+        for index, block in enumerate(blocks):
+            end = blocks[index + 1].start() if index + 1 < len(blocks) else len(text)
+            body = text[block.start():end]
+            updated, replaced = re.subn(
+                r"(?m)^hits\s*=\s*-?\d+",
+                f"hits = {self.entries[index].hits}",
+                body,
+                count=1,
+            )
+            if not replaced:
+                _write_atomic(path, self._entries_text())
+                return
+            pieces.append(text[position:block.start()])
+            pieces.append(updated)
+            position = end
+        pieces.append(text[position:])
+
+        _write_atomic(path, "".join(pieces))
+
     def record(self, result: Result) -> None:
         """Persist hit counters and queue the blocked candidates. Never raises."""
+        if not result.applied and not result.queued:
+            return          # nothing to persist: never rewrite the user's files needlessly
         try:
             if self.source_path is not None:
-                _write_atomic(self.source_path, self._entries_text())
+                self._persist_hits(self.source_path)
             if result.queued and self.queue_path is not None:
                 self._merge_queue(result.queued)
         except Exception as e:

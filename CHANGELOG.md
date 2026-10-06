@@ -4,6 +4,33 @@ All notable changes to Parakeet Cage. This project adheres to
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] — 2026-10-06
+
+The auto dictionary: what the app proposes now lives in its own store, so a machine-suggested word
+can never mix with one you typed.
+
+### Added
+
+- **Auto dictionary** (`parakeet_cage/auto_dictionary.py`, `~/.local/share/parakeet-cage/learning/auto.toml`):
+  `[[candidate]]` blocks are near-misses the app observed but never applied, `[[word]]` blocks are
+  the ones you accepted from them. Accepting a candidate no longer writes into your `lexicon.toml`.
+- The dictionary window shows both stores, under **Your dictionary** and **Auto**, with *Add as
+  alias*, *Ignore*, *→ mine* (promote a proposal into your own list) and *Clear auto*.
+- `[text] auto_dictionary` and `[text] auto_path`; `parakeet-cage --pending` reads the auto file, and
+  candidates from an older standalone `pending.toml` are imported on first use.
+
+### Changed
+
+- `Lexicon` no longer owns a candidate queue: the auto dictionary is the single owner of proposals,
+  and `Lexicon.record` only maintains hit counters.
+- Appending several entries in one save separates them with a blank line, as the rest of the file
+  does.
+
+### Decisions
+
+- **No desktop notifications.** Corrections stay visible through the log, the change log and the
+  tray's *Undo last correction*, and never interrupt dictation.
+
 ## [1.2.0] — 2026-10-06
 
 Spoken punctuation and a personal dictionary you manage in the app, both applied between the
@@ -138,5 +165,6 @@ Moondream's [Parakeet Redux](https://huggingface.co/moondream/parakeet-redux) mo
   registration is not implemented.
 - X11 (non-Wayland) sessions fall back to `xdotool`/`pynput`, which reach X11 clients only.
 
+[1.3.0]: https://github.com/craigmcgrain-spec/Parakeet-Cage/releases/tag/v1.3
 [1.2.0]: https://github.com/craigmcgrain-spec/Parakeet-Cage/releases/tag/v1.2
 [1.0.0]: https://github.com/craigmcgrain-spec/Parakeet-Cage/releases/tag/v1.0

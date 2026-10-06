@@ -29,7 +29,7 @@ from dataclasses import dataclass, replace as _replace
 import logging
 import re
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 import tomllib
 
 logger = logging.getLogger(__name__)
@@ -180,7 +180,7 @@ def _phrase_pattern(phrase: str) -> str:
     return r"\s+".join(re.escape(word) for word in phrase.split())
 
 
-def _write_atomic(path: Path, content: str) -> None:
+def write_atomic(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(content, encoding="utf-8")
@@ -192,18 +192,44 @@ def _toml_string(value: str) -> str:
     return f'"{escaped}"'
 
 
-def read_queue(path) -> List[Queued]:
-    """Candidates awaiting review, as written by blocked dictionary matches."""
-    path = Path(path)
-    if not path.exists():
-        return []
-    try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
-    except Exception as e:
-        logger.warning("Candidate queue %s is unreadable (%s); ignoring it", path, e)
-        return []
+def render_entry_block(entry: Entry) -> str:
+    lines = ["[[word]]", f"word = {_toml_string(entry.word)}"]
+    if entry.aliases:
+        lines.append("aliases = [" + ", ".join(_toml_string(alias) for alias in entry.aliases) + "]")
+    lines.append(f"enabled = {'true' if entry.enabled else 'false'}")
+    lines.append(f"hits = {entry.hits}")
+    return "\n".join(lines)
+
+
+def render_candidate_block(candidate: Queued) -> str:
+    return "\n".join([
+        "[[candidate]]",
+        f"heard = {_toml_string(candidate.token)}",
+        f"suggested = {_toml_string(candidate.suggestion)}",
+        f"method = {_toml_string(candidate.method)}",
+        f"distance = {candidate.distance}",
+        f"count = {candidate.count}",
+    ])
+
+
+def entry_from_row(row: Mapping) -> Optional[Entry]:
+    """One `[[word]]` table as an Entry, applying TOML defaults."""
+    word = str(row.get("word", "")).strip()
+    if not word:
+        return None
+    aliases = tuple(str(alias).strip() for alias in row.get("aliases", ()) if str(alias).strip())
+    return Entry(
+        word=word,
+        aliases=aliases,
+        enabled=bool(row.get("enabled", True)),
+        hits=int(row.get("hits", 0)),
+    )
+
+
+def queued_from_rows(rows: Sequence[Mapping]) -> List[Queued]:
+    """`[[candidate]]` tables as Queued rows, skipping anything without a heard token."""
     candidates: List[Queued] = []
-    for row in data.get("candidate", []):
+    for row in rows:
         heard = str(row.get("heard", "")).strip()
         if not heard:
             continue
@@ -219,17 +245,23 @@ def read_queue(path) -> List[Queued]:
     return candidates
 
 
+def read_queue(path) -> List[Queued]:
+    """Candidates awaiting review, as written by blocked dictionary matches."""
+    path = Path(path)
+    if not path.exists():
+        return []
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning("Candidate queue %s is unreadable (%s); ignoring it", path, e)
+        return []
+    return queued_from_rows(data.get("candidate", []))
+
+
 def write_queue(path, candidates: Sequence[Queued]) -> None:
-    lines = [f"schema_version = {SCHEMA_VERSION}", ""]
-    for candidate in candidates:
-        lines.append("[[candidate]]")
-        lines.append(f"heard = {_toml_string(candidate.token)}")
-        lines.append(f"suggested = {_toml_string(candidate.suggestion)}")
-        lines.append(f"method = {_toml_string(candidate.method)}")
-        lines.append(f"distance = {candidate.distance}")
-        lines.append(f"count = {candidate.count}")
-        lines.append("")
-    _write_atomic(Path(path), "\n".join(lines))
+    blocks = [render_candidate_block(candidate) for candidate in candidates]
+    body = f"schema_version = {SCHEMA_VERSION}\n\n" + "\n\n".join(blocks) + ("\n" if blocks else "")
+    write_atomic(Path(path), body)
 
 
 class Lexicon:
@@ -239,13 +271,11 @@ class Lexicon:
         self,
         entries: Iterable[Entry],
         piece_cost: Optional[PieceCost] = None,
-        queue_path: Optional[Path] = None,
         max_distance: int = DEFAULT_MAX_DISTANCE,
         source_path: Optional[Path] = None,
     ) -> None:
         self.entries: List[Entry] = list(entries)
         self.piece_cost = piece_cost
-        self.queue_path = Path(queue_path) if queue_path else None
         self.max_distance = max_distance
         self.source_path = Path(source_path) if source_path else None
         self._loaded_stamp: Optional[int] = self._stamp()
@@ -272,7 +302,6 @@ class Lexicon:
         fresh = Lexicon.load(
             self.source_path,
             piece_cost=self.piece_cost,
-            queue_path=self.queue_path,
             max_distance=self.max_distance,
         )
         self.entries = fresh.entries
@@ -287,7 +316,6 @@ class Lexicon:
         cls,
         path: Path,
         piece_cost: Optional[PieceCost] = None,
-        queue_path: Optional[Path] = None,
         max_distance: int = DEFAULT_MAX_DISTANCE,
     ) -> "Lexicon":
         path = Path(path)
@@ -295,23 +323,10 @@ class Lexicon:
         if path.exists():
             try:
                 data = tomllib.loads(path.read_text(encoding="utf-8"))
-                for row in data.get("word", []):
-                    word = str(row.get("word", "")).strip()
-                    if not word:
-                        continue
-                    aliases = tuple(str(a).strip() for a in row.get("aliases", ()) if str(a).strip())
-                    entries.append(
-                        Entry(
-                            word=word,
-                            aliases=aliases,
-                            enabled=bool(row.get("enabled", True)),
-                            hits=int(row.get("hits", 0)),
-                        )
-                    )
+                entries = [parsed for parsed in (entry_from_row(row) for row in data.get("word", [])) if parsed]
             except Exception as e:
                 logger.warning("Lexicon %s is unreadable (%s); continuing without it", path, e)
-        return cls(entries, piece_cost=piece_cost, queue_path=queue_path,
-                   max_distance=max_distance, source_path=path)
+        return cls(entries, piece_cost=piece_cost, max_distance=max_distance, source_path=path)
 
     def _entries_text(self) -> str:
         lines = [f"schema_version = {SCHEMA_VERSION}", ""]
@@ -347,12 +362,12 @@ class Lexicon:
         try:
             text = path.read_text(encoding="utf-8")
         except OSError:
-            _write_atomic(path, self._entries_text())
+            write_atomic(path, self._entries_text())
             return
 
         blocks = list(re.finditer(r"^\[\[word\]\]", text, re.MULTILINE))
         if len(blocks) != len(self.entries):
-            _write_atomic(path, self._entries_text())
+            write_atomic(path, self._entries_text())
             return
 
         pieces: List[str] = []
@@ -367,14 +382,14 @@ class Lexicon:
                 count=1,
             )
             if not replaced:
-                _write_atomic(path, self._entries_text())
+                write_atomic(path, self._entries_text())
                 return
             pieces.append(text[position:block.start()])
             pieces.append(updated)
             position = end
         pieces.append(text[position:])
 
-        _write_atomic(path, "".join(pieces))
+        write_atomic(path, "".join(pieces))
         self._loaded_stamp = self._stamp()
 
     # -- editing (used by the dictionary window) ------------------------------
@@ -397,13 +412,6 @@ class Lexicon:
             hits=int(hits_match.group(1)) if hits_match else 0,
         )
 
-    def _render_block(self, entry: Entry) -> str:
-        lines = ["[[word]]", f"word = {_toml_string(entry.word)}"]
-        if entry.aliases:
-            lines.append("aliases = [" + ", ".join(_toml_string(alias) for alias in entry.aliases) + "]")
-        lines.append(f"enabled = {'true' if entry.enabled else 'false'}")
-        lines.append(f"hits = {entry.hits}")
-        return "\n".join(lines) + "\n"
 
     @staticmethod
     def _rewrite_block(body: str, entry: Entry) -> str:
@@ -438,7 +446,7 @@ class Lexicon:
 
         if path is None or not path.exists():
             if path is not None:
-                _write_atomic(path, "\n".join(self._render_block(e) for e in new_entries))
+                write_atomic(path, "\n".join(render_entry_block(e) for e in new_entries))
             self.entries = new_entries
             return
 
@@ -466,41 +474,22 @@ class Lexicon:
         if appended:
             if not result.endswith("\n"):
                 result += "\n"
-            result += "\n" + "\n".join(self._render_block(entry) for entry in appended)
+            result += "\n" + "\n\n".join(render_entry_block(entry) for entry in appended)
 
         if result != text:
-            _write_atomic(path, result)
+            write_atomic(path, result)
         self.entries = new_entries
         self._loaded_stamp = self._stamp()
 
     def record(self, result: Result) -> None:
-        """Persist hit counters and queue the blocked candidates. Never raises."""
-        if not result.applied and not result.queued:
-            return          # nothing to persist: never rewrite the user's files needlessly
+        """Persist hit counters. Never raises; candidates belong to the auto dictionary."""
+        if not result.applied:
+            return          # nothing to persist: never rewrite the user's file needlessly
         try:
             if self.source_path is not None:
                 self._persist_hits(self.source_path)
-            if result.queued and self.queue_path is not None:
-                self._merge_queue(result.queued)
         except Exception as e:
             logger.warning("Could not persist dictionary state: %s", e)
-
-    def _merge_queue(self, queued: Sequence[Queued]) -> None:
-        existing = read_queue(self.queue_path)
-        counts = {(c.token, c.suggestion, c.method, c.distance): c.count for c in existing}
-        originals = {(c.token, c.suggestion, c.method, c.distance): c for c in existing}
-        order = [(c.token, c.suggestion, c.method, c.distance) for c in existing]
-        for candidate in queued:
-            key = (candidate.token, candidate.suggestion, candidate.method, candidate.distance)
-            if not key[0]:
-                continue
-            if key not in counts:
-                order.append(key)
-                counts[key] = 0
-                originals[key] = candidate
-            counts[key] += candidate.count
-
-        write_queue(self.queue_path, [_replace(originals[key], count=counts[key]) for key in order])
 
     # -- matching ------------------------------------------------------------
 

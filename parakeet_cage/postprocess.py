@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 from typing import Dict, Mapping, Optional, Tuple
 
+from parakeet_cage.auto_dictionary import AutoDictionary
 from parakeet_cage.config import TextConfig
 from parakeet_cage.lexicon import Applied, Lexicon, Queued, Result, piece_counter_for
 from parakeet_cage.textnorm import apply_spoken_punctuation
@@ -44,23 +45,31 @@ def default_lexicon_path() -> Path:
 
 
 def default_queue_path() -> Path:
-    """Where blocked dictionary candidates wait for review."""
+    """Legacy standalone candidate queue, still imported if present."""
     data_home = os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")
     return Path(data_home) / "parakeet-cage" / "learning" / "pending.toml"
 
 
+def default_auto_path() -> Path:
+    """The auto dictionary: candidates the app proposed, and the ones you accepted."""
+    data_home = os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")
+    return Path(data_home) / "parakeet-cage" / "learning" / "auto.toml"
+
+
 class TextPipeline:
-    """Applies spoken punctuation and the personal dictionary to a transcript."""
+    """Applies spoken punctuation, then your dictionary, then the auto dictionary."""
 
     def __init__(
         self,
         punctuation: bool = True,
         punctuation_extra: Optional[Mapping[str, str]] = None,
         lexicon: Optional[Lexicon] = None,
+        auto: Optional[AutoDictionary] = None,
     ) -> None:
         self.punctuation = punctuation
         self.punctuation_extra: Dict[str, str] = dict(punctuation_extra or {})
         self.lexicon = lexicon
+        self.auto = auto
 
     def _commands(self) -> Optional[Dict[str, Optional[str]]]:
         if not self.punctuation_extra:
@@ -88,6 +97,16 @@ class TextPipeline:
             except Exception as e:
                 logger.warning("Dictionary matching failed (%s); continuing without it", e)
 
+        if self.auto is not None:
+            try:
+                self.auto.reload_if_changed()
+                auto_result = self.auto.lexicon_view().apply(final)
+                final = auto_result.text
+                applied = applied + auto_result.applied
+                queued = queued + auto_result.queued
+            except Exception as e:
+                logger.warning("Auto dictionary matching failed (%s); continuing without it", e)
+
         return Change(raw=text, final=final, applied=applied, queued=queued)
 
     def save_entries(self, entries) -> None:
@@ -97,10 +116,15 @@ class TextPipeline:
         self.lexicon.save_entries(entries)
 
     def record(self, change: Change) -> None:
-        """Persist hit counters and queued candidates for a processed change."""
-        if self.lexicon is None:
+        """Persist hit counters, and hand blocked candidates to the auto dictionary."""
+        if self.lexicon is not None:
+            self.lexicon.record(Result(text=change.final, applied=change.applied))
+        if self.auto is None:
             return
-        self.lexicon.record(Result(text=change.final, applied=change.applied, queued=change.queued))
+        for candidate in change.queued:
+            self.auto.add_candidate(candidate)
+        if not self.auto.is_empty():
+            self.auto.save()
 
 
 LEXICON_TEMPLATE = """# Parakeet Cage personal dictionary
@@ -140,29 +164,40 @@ def build_pipeline(
     text_config: TextConfig,
     tokenizer_path: Optional[Path] = None,
     lexicon_path: Optional[Path] = None,
-    queue_path: Optional[Path] = None,
+    auto_path: Optional[Path] = None,
+    legacy_queue_path: Optional[Path] = None,
 ) -> TextPipeline:
     """Build the pipeline described by a [text] config section.
 
-    Without a usable model tokenizer the dictionary still applies exact and alias
-    matches, but refuses to guess (see Lexicon): the tokenizer piece count is what
-    distinguishes a misheard rare word from a word the model knows well.
+    Without a usable model tokenizer the dictionaries still apply exact and alias matches, but
+    refuse to guess (see Lexicon): the tokenizer piece count is what distinguishes a misheard
+    rare word from a word the model knows well.
     """
+    piece_cost = piece_counter_for(Path(tokenizer_path)) if tokenizer_path else None
+
     lexicon: Optional[Lexicon] = None
     if text_config.lexicon:
         resolved_lexicon = Path(lexicon_path or text_config.lexicon_path or default_lexicon_path())
-        resolved_queue = Path(queue_path) if queue_path is not None else default_queue_path()
         _write_lexicon_template(resolved_lexicon)
-        piece_cost = piece_counter_for(Path(tokenizer_path)) if tokenizer_path else None
         lexicon = Lexicon.load(
             resolved_lexicon,
             piece_cost=piece_cost,
-            queue_path=resolved_queue,
             max_distance=text_config.lexicon_max_distance,
+        )
+
+    auto: Optional[AutoDictionary] = None
+    if text_config.auto_dictionary:
+        resolved_auto = Path(auto_path or text_config.auto_path or default_auto_path())
+        auto = AutoDictionary.load(
+            resolved_auto,
+            piece_cost=piece_cost,
+            max_distance=text_config.lexicon_max_distance,
+            legacy_queue_path=Path(legacy_queue_path) if legacy_queue_path is not None else default_queue_path(),
         )
 
     return TextPipeline(
         punctuation=text_config.punctuation,
         punctuation_extra=text_config.punctuation_extra,
         lexicon=lexicon,
+        auto=auto,
     )

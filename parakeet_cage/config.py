@@ -19,6 +19,8 @@ class TextConfig:
     lexicon: bool = True
     lexicon_path: str = ""
     lexicon_max_distance: int = 2
+    auto_dictionary: bool = True
+    auto_path: str = ""
 
 
 @dataclass
@@ -60,6 +62,8 @@ def load_config(path: Path) -> Config:
             lexicon=bool(text_data.get("lexicon", True)),
             lexicon_path=str(text_data.get("lexicon_path", "")),
             lexicon_max_distance=int(text_data.get("lexicon_max_distance", 2)),
+            auto_dictionary=bool(text_data.get("auto_dictionary", True)),
+            auto_path=str(text_data.get("auto_path", "")),
         ),
     )
 
@@ -81,6 +85,8 @@ def save_config(cfg: Config, path: Path) -> None:
         f.write(f"lexicon = {'true' if cfg.text.lexicon else 'false'}\n")
         f.write(f'lexicon_path = "{cfg.text.lexicon_path}"\n')
         f.write(f"lexicon_max_distance = {cfg.text.lexicon_max_distance}\n")
+        f.write(f"auto_dictionary = {'true' if cfg.text.auto_dictionary else 'false'}\n")
+        f.write(f'auto_path = "{cfg.text.auto_path}"\n')
         f.write("\n[text.punctuation_extra]\n")
         for command, symbol in cfg.text.punctuation_extra.items():
             f.write(f'"{command}" = "{symbol}"\n')

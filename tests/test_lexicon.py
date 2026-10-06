@@ -158,8 +158,8 @@ def test_load_and_record_round_trip(tmp_path, counted):
         'schema_version = 1\n\n[[word]]\nword = "kestrel"\naliases = ["castrell"]\nenabled = true\n',
         encoding="utf-8",
     )
-    queue_path = tmp_path / "pending.toml"
-    lex = Lexicon.load(lexicon_path, piece_cost=piece_counter_for(TOKENIZER), queue_path=queue_path)
+    queue_path = tmp_path / "pending.toml"      # legacy queue must not be created any more
+    lex = Lexicon.load(lexicon_path, piece_cost=piece_counter_for(TOKENIZER))
 
     result = lex.apply("castrell is fast")
     lex.record(result)
@@ -168,6 +168,7 @@ def test_load_and_record_round_trip(tmp_path, counted):
     assert reloaded.apply("castrell again").applied[0].after == "kestrel"
     assert "hits = 1" in lexicon_path.read_text(encoding="utf-8")
     assert not list(tmp_path.glob("*.tmp"))
+    assert not queue_path.exists()
 
 
 def test_record_keeps_hand_written_comments(tmp_path, counted):
@@ -224,9 +225,22 @@ def test_save_entries_adds_a_word_without_touching_the_rest(tmp_path):
     assert "# keep me" in text
     assert "# notes survive" in text
     assert 'word = "Möbius"' in text and 'aliases = ["Mobilius"]' in text
+    assert "\n\n[[word]]\nword = \"Möbius\"" in text      # appended with a blank line, like the rest
     reloaded = Lexicon.load(lexicon_path, piece_cost=None)
     assert [entry.word for entry in reloaded.entries] == ["kestrel", "Möbius"]
     assert reloaded.entries[0].hits == 3
+
+
+def test_save_entries_separates_several_new_words(tmp_path):
+    lexicon_path = tmp_path / "lexicon.toml"
+    lexicon_path.write_text("schema_version = 1\n", encoding="utf-8")
+    lex = Lexicon.load(lexicon_path, piece_cost=None)
+
+    lex.save_entries([Entry(word="kestrel"), Entry(word="Möbius")])
+
+    text = lexicon_path.read_text(encoding="utf-8")
+    assert "\n\n[[word]]\nword = \"kestrel\"" in text
+    assert "\n\n[[word]]\nword = \"Möbius\"" in text
 
 
 def test_save_entries_edits_aliases_and_enabled_in_place(tmp_path):
@@ -278,16 +292,17 @@ def test_save_entries_leaves_an_unchanged_file_alone(tmp_path):
     assert lexicon_path.read_bytes() == before
 
 
-def test_record_queues_blocked_candidates_once(tmp_path, counted):
-    queue_path = tmp_path / "pending.toml"
-    lex = counted([Entry(word="OAuth")], queue_path=queue_path)
-    lex.record(lex.apply("our team"))
-    lex.record(lex.apply("our roadmap"))
+def test_lexicon_never_writes_candidates(tmp_path, counted):
+    """Candidates belong to the auto dictionary; your dictionary only holds your words."""
+    lexicon_path = tmp_path / "user.toml"
+    lexicon_path.write_text('schema_version = 1\n\n[[word]]\nword = "OAuth"\n', encoding="utf-8")
+    lex = Lexicon.load(lexicon_path, piece_cost=piece_counter_for(TOKENIZER))
 
-    text = queue_path.read_text(encoding="utf-8")
-    assert text.count('heard = "our"') == 1
-    assert "count = 2" in text
-    assert 'suggested = "OAuth"' in text
+    result = lex.apply("our team")
+    lex.record(result)
+
+    assert [(queued.token, queued.suggestion) for queued in result.queued] == [("our", "OAuth")]
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["user.toml"]
 
 
 def test_empty_lexicon_is_a_no_op(counted):

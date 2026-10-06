@@ -28,9 +28,10 @@ flowchart LR
 - **GTK3 settings dialog** for hotkeys (interactive capture, `Esc` to cancel) and the input device.
 - **Spoken punctuation**: say "question mark", "comma", "new paragraph" and the symbol is typed —
   the model's own punctuation around the command is cleaned up rather than doubled.
-- **Personal dictionary**: teach it the names and jargon it keeps mishearing. Fuzzy matches apply
-  only to words the model does *not* know well, so "our" is never rewritten into "OAuth"; blocked
-  guesses are queued for review instead. Undo is one click away in the tray.
+- **Personal dictionary**, kept in two stores: **your** words (`lexicon.toml`) and **Auto**
+  (what the app proposed — accepted suggestions stay there until you promote them). Fuzzy matches
+  apply only to words the model does *not* know well, so "our" is never rewritten into "OAuth";
+  uncertain guesses become Auto candidates instead of touching your text. Undo is one tray click.
 - CPU inference, single process, no persistent window.
 
 ## Requirements
@@ -130,9 +131,11 @@ device = ""                       # "" = system default input, or a device name/
 
 [text]
 punctuation = true                # spoken commands -> symbols
-lexicon = true                    # personal dictionary
+lexicon = true                    # your dictionary (lexicon.toml)
 lexicon_path = ""                 # "" = ~/.config/parakeet-cage/lexicon.toml
 lexicon_max_distance = 2          # edit distance for semi-confident matches
+auto_dictionary = true            # what the app proposes (auto.toml)
+auto_path = ""                    # "" = ~/.local/share/parakeet-cage/learning/auto.toml
 
 [text.punctuation_extra]          # add commands, or disable one with ""
 "winky face" = ";-)"
@@ -166,9 +169,15 @@ Say `literal` before a command to leave it alone: `a literal period of time` sta
 
 ### Personal dictionary
 
-`~/.config/parakeet-cage/lexicon.toml` (created for you with the format documented):
+Two stores, deliberately kept apart:
+
+| Store | File | Holds |
+|---|---|---|
+| **Your dictionary** | `~/.config/parakeet-cage/lexicon.toml` | only words you added |
+| **Auto** | `~/.local/share/parakeet-cage/learning/auto.toml` | candidates the app observed, and the ones you accepted from them |
 
 ```toml
+# lexicon.toml - yours
 schema_version = 1
 
 [[word]]
@@ -178,10 +187,24 @@ enabled = true
 hits = 0                          # maintained by the app
 ```
 
-Edit it with any editor. Comments, spacing and ordering are preserved — the app rewrites only the
-`hits = N` values, in place, and only when a correction actually happened. The file is re-read
-whenever it changes, so your edits apply to the **next dictation** — no restart needed. See
-[docs/lexicon.md](docs/lexicon.md) for the file's full lifecycle.
+```toml
+# auto.toml - the app's proposals, never mixed into your file
+[[candidate]]                     # heard, not applied: yours to accept or ignore
+heard = "castle"
+suggested = "kestrel"
+method = "phonetic"
+distance = 1
+count = 3
+
+[[word]]                          # accepted from a candidate
+word = "kestrel"
+aliases = ["castle"]
+```
+
+Both are applied when dictating: your entries first, then Auto's. Edit either with any editor —
+comments, spacing and ordering in your file are preserved (the app rewrites only `hits = N`, in
+place) and both files are re-read whenever they change, so edits apply to the **next dictation**
+with no restart. See [docs/lexicon.md](docs/lexicon.md) for the full lifecycle.
 
 Matching is case-insensitive and whole-word only, and it is deliberately tiered:
 
@@ -190,28 +213,26 @@ Matching is case-insensitive and whole-word only, and it is deliberately tiered:
 | exact / alias | always |
 | edit distance ≤ `lexicon_max_distance` | only when the heard word is *rare* |
 | phonetic (consonant skeleton, *exactly* equal) | only when the heard word is *rare* |
-| one skeleton edit away, or blocked by the rarity guard | never applied — queued for review |
+| one skeleton edit away, or blocked by the rarity guard | never applied — becomes an Auto candidate |
 
 Rarity is measured with the model's own tokenizer: words it knows cost one or two subword pieces
 (`our` 1, `socket` 2) while misheard rare words are spelled out (`castrell` 4, `parakita` 3). That
-is what stops `our → OAuth` and `Socket → WebSocket` from corrupting ordinary sentences — those
-are written to `~/.local/share/parakeet-cage/learning/pending.toml` for you to confirm instead.
-Skeleton *equality* is required for the same reason: `castle` is one skeleton edit from `kestrel`
-and was rewritten to it during end-to-end testing, so looser matches are now queued, never applied.
+is what stops `our → OAuth` and `Socket → WebSocket` from corrupting ordinary sentences — they land
+in Auto as candidates instead. Skeleton *equality* is required for the same reason: `castle` is one
+skeleton edit from `kestrel` and was rewritten to it during end-to-end testing, so looser matches
+are only ever proposals.
 
 ```bash
-parakeet-cage --pending        # list queued candidates with how often each was seen
+parakeet-cage --pending        # list Auto's candidates with how often each was seen
 parakeet-cage --dictionary     # open the dictionary window (also in the tray menu)
 ```
 
-The window lists your words — spelling, aliases, an on/off switch and how often each has fired —
-and the candidates below it, each with **Add as alias** and **Ignore**. `Save` writes both files in
-place, keeping comments and formatting, and the daemon picks the change up on your next dictation.
-`Esc` closes.
-
-Copy the ones you agree with into the lexicon file; the next dictation uses them. After any
-transcript was changed, the tray menu offers **Undo last correction**, which re-pastes the
-transcript exactly as the model heard it.
+The window shows both stores: **Your dictionary** (spelling, aliases, on/off, hit count) and
+**Auto** (accepted proposals, plus pending candidates with *Add as alias* / *Ignore*). Buttons move
+an accepted proposal into your own list (*→ mine*) or drop the whole store (*Clear auto*); `Save`
+writes both files and the daemon uses them on your next dictation; `Esc` closes. Nothing here ever
+interrupts dictation — after a change, the tray menu offers **Undo last correction**, which
+re-pastes the transcript exactly as the model heard it.
 
 Honest limits: a dictionary **cannot** improve recognition on this model — the Parakeet TDT runtime
 refuses decoder hints (`"Parakeet TDT does not support an initial prompt"`, and unknown options such
@@ -292,7 +313,7 @@ rarity-checked fuzzy match.
 ## Development
 
 ```bash
-python3 -m pytest -q          # 117 tests
+python3 -m pytest -q          # 132 tests
 ```
 
 | Path | Contents |

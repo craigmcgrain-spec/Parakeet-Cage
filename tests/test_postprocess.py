@@ -71,25 +71,23 @@ def test_blocked_candidate_is_reported_not_applied():
     assert [(queued.token, queued.suggestion) for queued in change.queued] == [("our", "OAuth")]
 
 
-def test_record_persists_hits_and_queue(tmp_path):
-    lexicon_path = tmp_path / "lexicon.toml"
+def test_record_hands_candidates_to_the_auto_dictionary(tmp_path):
+    from parakeet_cage.auto_dictionary import AutoDictionary
+
+    lexicon_path = tmp_path / "user.toml"
     lexicon_path.write_text('schema_version = 1\n\n[[word]]\nword = "OAuth"\n', encoding="utf-8")
-    queue_path = tmp_path / "pending.toml"
+    auto_path = tmp_path / "auto.toml"
     pipeline = TextPipeline(
         punctuation=True,
-        lexicon=Lexicon(
-            [Entry(word="OAuth")],
-            piece_cost=cheap_pieces,
-            queue_path=queue_path,
-            source_path=lexicon_path,
-        ),
+        lexicon=Lexicon([Entry(word="OAuth")], piece_cost=cheap_pieces, source_path=lexicon_path),
+        auto=AutoDictionary.load(auto_path, piece_cost=cheap_pieces),
     )
 
     change = pipeline.process("our roadmap")
     pipeline.record(change)
 
-    assert 'heard = "our"' in queue_path.read_text(encoding="utf-8")
-    assert "hits = 0" in lexicon_path.read_text(encoding="utf-8")
+    assert 'heard = "our"' in auto_path.read_text(encoding="utf-8")
+    assert lexicon_path.read_text(encoding="utf-8") == 'schema_version = 1\n\n[[word]]\nword = "OAuth"\n'
 
 
 def test_pipeline_picks_up_hand_edits_without_a_restart(tmp_path):
@@ -120,6 +118,72 @@ def test_pipeline_saves_entries_through_to_the_file(tmp_path):
 
     assert pipeline.process("castrell daily").final == "kestrel daily"
     assert 'aliases = ["castrell"]' in lexicon_path.read_text(encoding="utf-8")
+
+
+MODEL_TOKENIZER = Path(__file__).resolve().parent.parent / "models" / "parakeet-redux" / "tokenizer.json"
+
+
+def test_auto_entries_apply_alongside_your_own_dictionary(tmp_path):
+    from parakeet_cage.auto_dictionary import AutoDictionary
+
+    auto = AutoDictionary.load(tmp_path / "auto.toml")
+    auto.add_entry("kestrel", ["castrell"])
+    auto.save()
+
+    pipeline = build_pipeline(
+        TextConfig(lexicon_path=str(tmp_path / "user.toml")),
+        tokenizer_path=None,
+        auto_path=tmp_path / "auto.toml",
+    )
+    pipeline.save_entries([Entry(word="gRPC", aliases=("grpc",))])
+
+    assert pipeline.process("we use castrell daily").final == "we use kestrel daily"
+    assert pipeline.process("we use grpc daily").final == "we use gRPC daily"
+
+
+def test_blocked_matches_land_in_the_auto_dictionary_not_your_file(tmp_path):
+    pipeline = build_pipeline(
+        TextConfig(lexicon_path=str(tmp_path / "user.toml")),
+        tokenizer_path=MODEL_TOKENIZER,
+        auto_path=tmp_path / "auto.toml",
+    )
+    pipeline.save_entries([Entry(word="kestrel")])
+
+    change = pipeline.process("we use castle daily")
+    pipeline.record(change)
+
+    assert change.final == "we use castle daily"          # never rewritten on a hunch
+    assert 'heard = "castle"' in (tmp_path / "auto.toml").read_text(encoding="utf-8")
+    assert "castl" not in (tmp_path / "user.toml").read_text(encoding="utf-8")
+
+
+def test_auto_dictionary_hot_reloads(tmp_path):
+    from parakeet_cage.auto_dictionary import AutoDictionary
+
+    auto_path = tmp_path / "auto.toml"
+    pipeline = build_pipeline(
+        TextConfig(lexicon_path=str(tmp_path / "user.toml")),
+        tokenizer_path=None,
+        auto_path=auto_path,
+    )
+    assert pipeline.process("castrell daily").final == "castrell daily"
+
+    auto = AutoDictionary.load(auto_path)
+    auto.add_entry("kestrel", ["castrell"])
+    auto.save()
+
+    assert pipeline.process("castrell daily").final == "kestrel daily"
+
+
+def test_auto_dictionary_can_be_switched_off(tmp_path):
+    pipeline = build_pipeline(
+        TextConfig(lexicon_path=str(tmp_path / "user.toml"), auto_dictionary=False),
+        tokenizer_path=None,
+        auto_path=tmp_path / "auto.toml",
+    )
+
+    assert pipeline.auto is None
+    assert not (tmp_path / "auto.toml").exists()
 
 
 def test_build_pipeline_creates_a_documented_template(tmp_path):

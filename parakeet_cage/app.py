@@ -15,7 +15,7 @@ from parakeet_cage.clipboard import paste_text
 from parakeet_cage.config import Config, load_config, save_config
 from parakeet_cage.dictionary_ui import DictionaryWindow, open_dictionary_window
 from parakeet_cage.hotkey import AppState, HotkeyListener, StateMachine
-from parakeet_cage.postprocess import Change, build_pipeline, default_queue_path
+from parakeet_cage.postprocess import Change, build_pipeline, default_auto_path
 from parakeet_cage.transcriber import Transcriber, resolve_local_model_path
 from parakeet_cage.tray import TrayManager
 from parakeet_cage.ui import SettingsWindow
@@ -236,7 +236,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     args = parser.parse_args(argv)
 
     if args.pending:
-        print(format_pending(default_queue_path()))
+        config = load_config(DEFAULT_CONFIG_PATH)
+        auto_path = Path(config.text.auto_path) if config.text.auto_path else default_auto_path()
+        print(format_pending(auto_path))
         return
 
     if args.dictionary:

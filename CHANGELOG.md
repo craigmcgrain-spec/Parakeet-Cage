@@ -1,0 +1,65 @@
+# Changelog
+
+All notable changes to Parakeet Cage. This project adheres to
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.0.0] — 2026-10-06
+
+First public release. Push-to-talk dictation for Linux with fully local inference, powered by
+Moondream's [Parakeet Redux](https://huggingface.co/moondream/parakeet-redux) model (CC-BY-4.0).
+
+### Added
+
+- Global push-to-talk hotkey (`F9` by default) with auto-repeat debounce; configurable quit hotkey.
+- Microphone capture via `sounddevice`, auto-negotiating the device's native sample rate and
+  resampling to 16 kHz mono for the model.
+- Offline Parakeet Redux inference: weights loaded strictly from local disk, with HuggingFace
+  snapshot checks, telemetry and remote probes disabled in-process.
+- Tray icon with idle/recording/transcribing states (green/red/amber).
+- GTK 3 settings dialog: interactive hotkey capture (`Esc` cancels), input device selector, model
+  path; writes `~/.config/parakeet-cage/config.toml`.
+- Clipboard integration with previous-clipboard restoration, and transcription retained on the
+  clipboard when injection fails (with an actionable error instead of a silent no-op).
+- AppImage packaging that bundles the application, the model weights and the attribution files.
+
+### Changed
+
+- **Text injection is now Wayland-native.** `xdg-desktop-portal`'s RemoteDesktop virtual keyboard
+  replaces the previous `ydotool`/`ydotoold` backend, so no root, `/dev/uinput` or helper daemon is
+  required, and keystrokes reach native Wayland clients. `wtype`, `xdotool` and `pynput` remain as
+  ordered fallbacks; `pynput` is skipped on Wayland because XTest can never reach a native Wayland
+  window.
+- Injection backends now report success/failure; the portal session is created once per run and
+  cached, with a retry cooldown so a denied or restarting portal cannot spam consent dialogs.
+- Post-paste clipboard restore waits 0.5 s (was 0.2 s) so a temporarily busy target application does
+  not paste the restored clipboard instead of the transcription.
+- Versioning starts at 1.0.0; packaging metadata, README, credits and license added.
+
+### Fixed
+
+- Transcribed text never appeared at the cursor when no injection backend was usable: failures were
+  logged at `DEBUG` (or swallowed) and the clipboard was restored on top of the transcription.
+- `xdg-desktop-portal` (1.x) is crashed by a `CreateSession` request without `session_handle_token`
+  — the option is documented as optional but the portal dies with `Remote peer disconnected`. The
+  client now always sends it.
+- A `dbus.SessionBus()` connection created before a GLib main loop exists (the clipboard helpers do
+  this) can never receive signals; the portal client now owns a private, loop-attached connection.
+- Recorded audio is resampled from the negotiated hardware rate instead of assuming 16 kHz, and the
+  recorder no longer aborts on the first unsupported sample rate.
+- Tray icon updates are marshalled onto the GLib main loop; the Tk settings window was replaced by
+  GTK 3 to stop a `Tcl_Panic` crash alongside pystray.
+
+### Known limitations
+
+- The AppImage is a **thin** bundle: it ships the application code, the model weights and the
+  attribution, but relies on the host for Python 3, PyGObject, dbus-python and the pip
+  dependencies. GTK/PyGObject extensions are compiled against the host interpreter, so the design
+  spec's "bundle every pip dependency" goal is only partially met. A preflight in `AppRun` names
+  anything missing and how to install it.
+- Global hotkeys use X11 key grabs on `$DISPLAY` (Xwayland). Compositors that do not forward X11
+  grabs to focused native Wayland windows need a compositor-side binding; portal GlobalShortcuts
+  registration is not implemented.
+- X11 (non-Wayland) sessions fall back to `xdotool`/`pynput`, which reach X11 clients only.
+
+[1.0.0]: https://github.com/craigmcgrain-spec/Parakeet-Cage/releases/tag/v1.0

@@ -7,4 +7,6 @@ build/
 dist/
 *.AppImage
 *.egg-info/
+.venv/
+venv/
 models/parakeet-redux/*.safetensors

@@ -80,7 +80,6 @@ def parse_hotkey(hotkey_str: str, display: Display):
         else:
             key_part = p
 
-    # Map name to keysym
     keysym_name = key_part.upper() if key_part.startswith("f") and key_part[1:].isdigit() else key_part
     keysym = XK.string_to_keysym(keysym_name)
     if keysym == 0:
@@ -105,6 +104,7 @@ class HotkeyListener:
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._disp: Optional[Display] = None
+        self._last_press_time: float = 0.0
 
     def start(self) -> None:
         if self._running:
@@ -162,6 +162,9 @@ class HotkeyListener:
 
         logger.info("Global hotkey listener loop running.")
 
+        is_key_down = False
+        last_key_press_time = 0.0
+
         while self._running:
             record_code, _ = parse_hotkey(self.record_hotkey, disp) if self.record_hotkey else (0, 0)
             quit_code, _ = parse_hotkey(self.quit_hotkey, disp) if self.quit_hotkey else (0, 0)
@@ -171,23 +174,30 @@ class HotkeyListener:
 
                 if event.type == X.KeyPress:
                     if event.detail == record_code and record_code != 0:
-                        self.state_machine.handle_record_pressed()
+                        last_key_press_time = time.monotonic()
+                        if not is_key_down:
+                            is_key_down = True
+                            self.state_machine.handle_record_pressed()
                     elif event.detail == quit_code and quit_code != 0:
                         self.state_machine.handle_quit()
 
                 elif event.type == X.KeyRelease:
                     if event.detail == record_code and record_code != 0:
-                        # Debounce auto-repeat
-                        if disp.pending_events() > 0:
+                        # Auto-repeat check: peek ahead in the event queue
+                        disp.sync()
+                        has_immediate_press = False
+                        while disp.pending_events() > 0:
                             next_ev = disp.next_event()
-                            if (
-                                next_ev.type == X.KeyPress
-                                and next_ev.detail == event.detail
-                                and next_ev.time == event.time
-                            ):
-                                continue
+                            if next_ev.type == X.KeyPress and next_ev.detail == record_code:
+                                has_immediate_press = True
+                                last_key_press_time = time.monotonic()
+                                break
                             else:
                                 disp.put_back_event(next_ev)
-                        self.state_machine.handle_record_released()
+                                break
+
+                        if not has_immediate_press and is_key_down:
+                            is_key_down = False
+                            self.state_machine.handle_record_released()
 
             time.sleep(0.01)

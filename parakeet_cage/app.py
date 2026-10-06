@@ -88,8 +88,10 @@ class Application:
         self.transcriber.load(self.config.model_path or "moondream/parakeet-redux")
 
         self.hotkeys.start()
-        self.tray.start()
         logger.info("Parakeet Cage is running. Ready for speech input.")
+
+        # Run the tray icon on the main thread loop
+        self.tray.run()
 
     def quit(self) -> None:
         logger.info("Shutting down Parakeet Cage...")

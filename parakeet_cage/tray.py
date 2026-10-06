@@ -43,17 +43,25 @@ class TrayManager:
         self._icon: Optional[pystray.Icon] = None
         self._thread: Optional[threading.Thread] = None
 
-    def start(self) -> None:
-        """Run system tray icon in background thread."""
+    def _build_icon(self) -> pystray.Icon:
         image = create_tray_icon_image(AppState.IDLE)
         menu = pystray.Menu(
             pystray.MenuItem("Settings", self._handle_settings),
             pystray.MenuItem("Quit", self._handle_quit),
         )
-        self._icon = pystray.Icon("Parakeet Cage", image, "Parakeet Cage", menu)
-        self._thread = threading.Thread(target=self._icon.run, daemon=True)
-        self._thread.start()
+        self._icon = pystray.Icon("parakeet-cage", image, "Parakeet Cage", menu)
+        return self._icon
 
+    def run(self) -> None:
+        """Run system tray on main loop (blocking)."""
+        icon = self._build_icon()
+        icon.run()
+
+    def start(self) -> None:
+        """Run system tray in background thread."""
+        icon = self._build_icon()
+        self._thread = threading.Thread(target=icon.run, daemon=True)
+        self._thread.start()
     def update_state(self, state: AppState) -> None:
         """Update the icon image based on application state."""
         if self._icon is not None:

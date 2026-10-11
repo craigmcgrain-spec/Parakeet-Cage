@@ -37,6 +37,11 @@ question of whether to download it.
   arrive during installation (git-lfs or the installer's prompt) or from `--fetch-model`.
 - Install documentation: HTTPS clone URL, one installer, and the two ways the weights arrive;
   manual steps kept for anyone who wants them.
+- **`pynput` moved to the optional `x11` extra** (`pip install --user -e '.[x11]'`). It is the
+  last of four keystroke backends and its `evdev` dependency has no wheel on newer Pythons, so a
+  hard dependency made every Fedora 44 install compile a C extension (and fail without
+  `python3-devel`). The lazy import already handled its absence; `pip install --user -e .` no
+  longer needs a compiler.
 
 ## [1.3.0] — 2026-10-06
 

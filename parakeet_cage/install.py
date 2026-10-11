@@ -116,6 +116,11 @@ def collect_requirements(run: Callable[..., Any] = subprocess.run) -> List[Requi
             "pip dependency - microphone capture",
         ),
         Requirement(
+            "pynput (X11 fallback)", _module_available("pynput"),
+            "optional extra, needs python3-devel + gcc to build: pip install --user -e '.[x11]'",
+            required=False,
+        ),
+        Requirement(
             "wl-clipboard", shutil.which("wl-copy") is not None,
             "wl-clipboard - clipboard on Wayland",
             system=True, required=False,
@@ -227,7 +232,8 @@ class Installer:
         if self.run(command).returncode != 0:
             self.log("\n  pip failed. Re-run by hand to see the error:")
             self.log("    " + " ".join(command))
-            self.log("  If pip says 'externally-managed-environment', use a virtualenv or pipx instead.")
+            self.log("  'externally-managed-environment' -> use a virtualenv or pipx instead.")
+            self.log("  A dependency that fails to compile -> install python3-devel and gcc.")
             return 1
         bindir = Path.home() / ".local" / "bin"
         if str(bindir) not in os.environ.get("PATH", "").split(os.pathsep):

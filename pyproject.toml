@@ -23,6 +23,9 @@ classifiers = [
 
 # GTK/PyGObject and dbus-python are compiled against the system interpreter, so on
 # Fedora/RHEL install them with dnf (python3-gobject, dbus-python) - see README.md.
+# pynput lives in the optional "x11" extra: it is the last-resort X11 keystroke
+# backend, and its evdev dependency has no wheel on some Pythons, which would force
+# every user to compile a C extension for a path the app reaches last of four.
 dependencies = [
     "kestrel>=0.9",        # Parakeet Redux (Photon) inference runtime
     "torch>=2.0",          # required by kestrel; imported for tensor dtypes
@@ -31,13 +34,14 @@ dependencies = [
     "python-xlib>=0.33",   # global hotkey grabs
     "pystray>=0.19",       # tray icon
     "pillow>=10.0",        # tray icon rendering
-    "pynput>=1.7",         # X11-only keystroke fallback
     "PyGObject>=3.42",     # settings dialog, tray main loop
     "dbus-python>=1.3",    # Klipper clipboard, portal virtual keyboard
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# pip install -e '.[x11]' - needs python3-devel + gcc on Fedora (evdev builds from source)
+x11 = ["pynput>=1.7"]      # X11-only XTest keystroke fallback (backend 4 of 4)
 
 [project.scripts]
 parakeet-cage = "parakeet_cage.app:main"

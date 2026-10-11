@@ -46,6 +46,7 @@ flowchart LR
 | sounddevice / PortAudio | microphone capture |
 | `wl-clipboard` (`wl-copy`/`wl-paste`) | clipboard on Wayland (or Klipper via D-Bus) |
 | `xdg-desktop-portal` (with RemoteDesktop support) | keystroke injection on Wayland |
+| `pynput` (optional) | extra X11 keystroke fallback: `pip install --user -e '.[x11]'` (needs `python3-devel` + `gcc`) |
 | Model weights | ~178 MB; arrive with the clone through git-lfs, or `./install.sh` fetches them — see [Model weights](#model-weights) |
 
 ## Install
@@ -104,6 +105,7 @@ Same thing, by hand:
 git lfs install && git lfs pull        # or skip, and let --fetch-model get the weights
 sudo dnf install python3-gobject gtk3 dbus-python wl-clipboard   # Fedora
 python3 -m pip install --user -e .
+python3 -m pip install --user -e '.[x11]'   # optional: XTest fallback (needs python3-devel, gcc)
 parakeet-cage --fetch-model            # ~178 MB, sha256-verified, only if you skipped git-lfs
 ```
 
@@ -298,7 +300,7 @@ in-memory WAV.
 | 1 | `xdg-desktop-portal` RemoteDesktop virtual keyboard (`NotifyKeyboardKeycode`, evdev codes) | all Wayland clients, incl. native Wayland — no root, no `/dev/uinput`, no helper binary |
 | 2 | `wtype` | compositors implementing `zwp_virtual_keyboard_v1` |
 | 3 | `xdotool` | X11 / Xwayland windows |
-| 4 | `pynput` (XTest) | X11 only; skipped on Wayland, where it can never reach a native Wayland window |
+| 4 | `pynput` (XTest) | X11 only; skipped on Wayland, where it can never reach a native Wayland window. **Optional**: the `x11` extra, `pip install --user -e '.[x11]'` |
 
 Backends report success or failure explicitly. If none succeeds, the transcription stays on the
 clipboard and an actionable error is logged instead of failing silently.

@@ -13,9 +13,11 @@ from pathlib import Path
 import tempfile
 import warnings
 import wave
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 import torch
+
+from parakeet_cage import model_store
 
 # Complete isolation from all remote services
 os.environ["HF_HUB_OFFLINE"] = "1"
@@ -29,12 +31,14 @@ logging.getLogger("httpx").setLevel(logging.ERROR)
 
 logger = logging.getLogger(__name__)
 
-# Search order for local weights (project folder first, then local user share)
-DEFAULT_SEARCH_PATHS = [
-    Path(__file__).resolve().parent.parent / "models" / "parakeet-redux",
-    Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "parakeet-cage" / "models" / "parakeet-redux",
-    Path.home() / ".cache" / "huggingface" / "hub" / "models--moondream--parakeet-redux" / "snapshots" / "2bf128600aac4b16946f7ed8372e56117fe5e23b",
-]
+
+def default_search_paths() -> List[Path]:
+    """Search order for the weights: the clone first, then per-user storage."""
+    return [
+        Path(__file__).resolve().parent.parent / "models" / "parakeet-redux",
+        model_store.user_model_dir(),
+        model_store.hf_cache_dir(),
+    ]
 
 
 @dataclass
@@ -55,18 +59,34 @@ class LocalRuntimeConfig:
 
 
 def resolve_local_model_path(custom_path: Optional[str] = None) -> Path:
-    """Find the local directory containing model.safetensors and config.json."""
-    candidates = []
+    """Find the local directory holding the verified Parakeet Redux weights.
+
+    Existence is not enough: a git-lfs pointer stub or a truncated file is
+    rejected, so a broken copy can never shadow a usable directory later in the
+    search order. Verification is by size only - hashing runs when downloading.
+    """
+    candidates: List[Path] = []
     if custom_path:
         candidates.append(Path(custom_path))
-    candidates.extend(DEFAULT_SEARCH_PATHS)
+    candidates.extend(default_search_paths())
 
+    seen = set()
+    rejected = []
     for p in candidates:
-        if p.exists() and (p / "model.safetensors").exists() and (p / "config.json").exists():
+        key = str(p)
+        if key in seen:
+            continue
+        seen.add(key)
+        check = model_store.check_weights(p)
+        if check.ok:
             return p.resolve()
+        rejected.append(f"  {check.detail}")
 
     raise FileNotFoundError(
-        f"Local model weights not found in any standard location: {[str(p) for p in candidates]}"
+        "Parakeet Redux weights are not installed.\n"
+        + "\n".join(rejected)
+        + "\n"
+        + model_store.WEIGHTS_HINT
     )
 
 

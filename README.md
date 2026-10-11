@@ -16,7 +16,8 @@ flowchart LR
 
 - **Push-to-talk** global hotkey, rebindable from the tray menu.
 - **Fully offline** ASR — the model is loaded from local weights, HuggingFace telemetry and
-  remote snapshot checks are disabled in-process.
+  remote snapshot checks are disabled in-process, and the running app makes no network calls at
+  all (the weights are fetched once, by `install.sh` or `--fetch-model`, after asking).
 - **25 languages** detected automatically by the model.
 - **Tray status icon**: green = idle, red = recording, amber = transcribing.
 - **Works on Wayland, including native Wayland clients** — text is injected through the
@@ -45,49 +46,78 @@ flowchart LR
 | sounddevice / PortAudio | microphone capture |
 | `wl-clipboard` (`wl-copy`/`wl-paste`) | clipboard on Wayland (or Klipper via D-Bus) |
 | `xdg-desktop-portal` (with RemoteDesktop support) | keystroke injection on Wayland |
-| Model weights | ~178 MB, see below |
+| Model weights | ~178 MB; arrive with the clone through git-lfs, or `./install.sh` fetches them — see [Model weights](#model-weights) |
 
 ## Install
 
-### From source
-
 ```bash
-git clone git@github.com:craigmcgrain-spec/Parakeet-Cage.git
+git clone https://github.com/craigmcgrain-spec/Parakeet-Cage.git
 cd Parakeet-Cage
-
-# system packages (Fedora)
-sudo dnf install python3-gobject gtk3 dbus-python wl-clipboard
-
-# python dependencies + console script
-pip install -e .
+./install.sh
 ```
+
+`install.sh` is the whole installation. It never uses `sudo` on its own, and it never downloads
+anything without asking:
+
+| Stage | What it does |
+|---|---|
+| preflight | python ≥ 3.11, pip, git, git-lfs, PyGObject, dbus-python, sounddevice, wl-clipboard and the portal; prints the `dnf`/`apt`/`pacman` line for anything missing, and offers to run it on a known distribution |
+| app | `python3 -m pip install --user -e .` (editable, so the clone stays the source of truth) |
+| model | uses the weights already in the clone (git-lfs) if they are there, otherwise **asks** whether to download the ~178 MB Parakeet Redux weights, then verifies every file's sha256 |
+| finish | next steps, and the command to re-run any part |
+
+Non-interactive use: `./install.sh --yes` (accept the download), `./install.sh --no-model`,
+`./install.sh --skip-app`. After the first install, `parakeet-cage-install` re-runs the same
+installer, and `parakeet-cage --fetch-model` fetches just the weights.
 
 ### Model weights
 
-The app **never downloads anything**. Fetch the weights once and place them in any of these
-locations (the first match wins, project directory first):
+The weights are pinned to one revision of
+[`moondream/parakeet-redux`](https://huggingface.co/moondream/parakeet-redux) with a known size and
+sha256 for each file, so they can arrive in either of two ways:
+
+| Way | How | When |
+|---|---|---|
+| with the clone | **git-lfs** downloads them during `git clone` (170 MB; needs `git lfs install` once per machine) | you have git-lfs |
+| at install time | `./install.sh` asks, then downloads and verifies them into `~/.local/share/parakeet-cage/models/parakeet-redux` | no git-lfs, or you declined |
+
+**The app never uses the network while it runs.** It reads the weights from disk with HuggingFace
+telemetry and snapshot checks disabled in-process; the download above happens only at install time,
+and `parakeet-cage --fetch-model` is the only other command that ever contacts a server.
+
+Search order, first *usable* directory wins:
 
 1. the path in your config (`[model] path`), e.g. `models/parakeet-redux`
 2. `~/.local/share/parakeet-cage/models/parakeet-redux` (or `$XDG_DATA_HOME/...`)
-3. `~/.cache/huggingface/hub/models--moondream--parakeet-redux/snapshots/<rev>`
+3. `~/.cache/huggingface/hub/models--moondream--parakeet-redux/snapshots/2bf1286...`
 
-A valid model directory contains `model.safetensors`, `config.json` and `tokenizer.json`.
+A directory is usable only when all four files match the pinned sizes: `model.safetensors`,
+`config.json`, `tokenizer.json`, `ternary.json`. A git-lfs **pointer** file (the 130-byte stub you
+get from a clone without git-lfs) is recognised and skipped instead of being handed to the runtime,
+so a broken first path can never shadow a working copy later in the list.
+
+### Manual install
+
+Same thing, by hand:
 
 ```bash
-pip install huggingface_hub
-hf download moondream/parakeet-redux --local-dir models/parakeet-redux
+git lfs install && git lfs pull        # or skip, and let --fetch-model get the weights
+sudo dnf install python3-gobject gtk3 dbus-python wl-clipboard   # Fedora
+python3 -m pip install --user -e .
+parakeet-cage --fetch-model            # ~178 MB, sha256-verified, only if you skipped git-lfs
 ```
 
 ### AppImage
 
 ```bash
 ./packaging/build_appimage.sh          # -> dist/Parakeet-Cage-<version>-x86_64.AppImage
-chmod +x dist/Parakeet-Cage-1.0.0-x86_64.AppImage
-./dist/Parakeet-Cage-1.0.0-x86_64.AppImage
+chmod +x dist/Parakeet-Cage-*-x86_64.AppImage
+./dist/Parakeet-Cage-*-x86_64.AppImage
 ```
 
-The AppImage bundles the application and the model weights; it uses the host's Python 3, PyGObject
-and dbus-python (see [AppImage packaging](#appimage-packaging)).
+The AppImage bundles the application and the model weights (the build fails if the clone only has
+git-lfs pointer stubs, instead of shipping an image that cannot transcribe); it uses the host's
+Python 3, PyGObject and dbus-python (see [AppImage packaging](#appimage-packaging)).
 
 ## Usage
 
@@ -225,6 +255,7 @@ are only ever proposals.
 ```bash
 parakeet-cage --pending        # list Auto's candidates with how often each was seen
 parakeet-cage --dictionary     # open the dictionary window (also in the tray menu)
+parakeet-cage --fetch-model    # download and verify the weights (~178 MB), then exit
 ```
 
 The window shows both stores: **Your dictionary** (spelling, aliases, on/off, hit count) and
@@ -293,8 +324,9 @@ application already holds that key — usually a second Parakeet Cage instance (
 source checkout, for example). Only one instance can own a global hotkey, and the second one will
 not dictate until the first exits.
 
-**`Local model weights not found`.** Put `model.safetensors` + `config.json` in one of the search
-paths above.
+**`Parakeet Redux weights are not installed`.** The error lists every path it tried and why each
+failed (missing, git-lfs pointer, wrong size). Fix it with `./install.sh` from the clone, or
+`git lfs install && git lfs pull`, or `parakeet-cage --fetch-model`.
 
 **Quit hotkey conflicts.** Release the record hotkey before pressing the quit combination; only one
 hotkey is handled at a time.
@@ -313,15 +345,22 @@ rarity-checked fuzzy match.
 ## Development
 
 ```bash
-python3 -m pytest -q          # 132 tests
+python3 -m pytest -q          # 168 tests
 ```
 
 | Path | Contents |
 |---|---|
 | `parakeet_cage/` | application package (config, audio, ASR, hotkeys, clipboard, tray, GTK settings, text post-processing) |
+| `parakeet_cage/model_store.py` | pinned weights: size/sha256 checks, the only downloader (`--fetch-model`, installer) |
+| `parakeet_cage/install.py` | the CLI installer behind `install.sh` / `parakeet-cage-install` |
+| `install.sh` | one-command install for a fresh clone; asks before downloading the model |
 | `tests/` | pytest suite, including a fake-bus portal session harness |
 | `packaging/` | AppImage build script and desktop entry |
 | `docs/superpowers/` | design spec and implementation plan |
+
+The weights themselves live in git-lfs (`.gitattributes`): `git lfs install` once per machine, then
+a clone brings them; `tests/test_model_store.py` covers the pointer/size/sha256 checks with
+zero-byte sparse files, so the suite never needs the 177 MB file.
 
 ### AppImage packaging
 

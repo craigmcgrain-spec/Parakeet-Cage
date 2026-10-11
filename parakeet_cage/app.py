@@ -9,14 +9,14 @@ import threading
 import tomllib
 from typing import Optional, Sequence
 
-from parakeet_cage import __version__
+from parakeet_cage import __version__, model_store
 from parakeet_cage.audio import AudioRecorder
 from parakeet_cage.clipboard import paste_text
 from parakeet_cage.config import Config, load_config, save_config
 from parakeet_cage.dictionary_ui import DictionaryWindow, open_dictionary_window
 from parakeet_cage.hotkey import AppState, HotkeyListener, StateMachine
 from parakeet_cage.postprocess import Change, build_pipeline, default_auto_path
-from parakeet_cage.transcriber import Transcriber, resolve_local_model_path
+from parakeet_cage.transcriber import Transcriber, default_search_paths, resolve_local_model_path
 from parakeet_cage.tray import TrayManager
 from parakeet_cage.ui import SettingsWindow
 
@@ -217,6 +217,36 @@ def format_pending(queue_path: Path) -> str:
     return "\n".join(lines)
 
 
+def fetch_model_cli() -> int:
+    """`parakeet-cage --fetch-model`: install the pinned weights, then exit.
+
+    This and the installer are the only places Parakeet Cage ever uses the
+    network. Running the app itself never does.
+    """
+    for candidate in default_search_paths():
+        check = model_store.check_weights(candidate)
+        if check.ok:
+            print(f"Weights already installed: {check.detail}")
+            return 0
+
+    dest = model_store.user_model_dir()
+    print(f"Parakeet Redux {model_store.MODEL_REVISION[:7]} -> {dest}")
+    print(f"  ~178 MB from {model_store.MODEL_REPO}, sha256-verified per file.")
+    try:
+        model_store.fetch_model(dest, on_progress=model_store.print_progress)
+    except model_store.ModelFetchError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        print("No partial file was kept; re-run to try again.", file=sys.stderr)
+        return 1
+    check = model_store.check_weights(dest)
+    if not check.ok:
+        print(f"error: {check.detail}", file=sys.stderr)
+        return 1
+    print(f"Installed {check.detail}")
+    print("The app reads these weights from disk and makes no network calls while running.")
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> None:
     parser = argparse.ArgumentParser(
         prog="parakeet-cage",
@@ -233,7 +263,15 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         action="store_true",
         help="open the dictionary window and exit",
     )
+    parser.add_argument(
+        "--fetch-model",
+        action="store_true",
+        help="download the pinned Parakeet Redux weights (~178 MB) into your data dir, then exit",
+    )
     args = parser.parse_args(argv)
+
+    if args.fetch_model:
+        sys.exit(fetch_model_cli())
 
     if args.pending:
         config = load_config(DEFAULT_CONFIG_PATH)

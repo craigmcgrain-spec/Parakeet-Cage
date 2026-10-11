@@ -21,6 +21,10 @@ and an indication of changes. Parakeet Cage does not modify the weights; it load
 redistributed, this section (and `models/parakeet-redux/` alongside it) must travel with it — the
 build script copies this file into the bundle for that reason.
 
+This repository **redistributes the unmodified weights** (`models/parakeet-redux/`, through
+git-lfs), and `parakeet-cage --fetch-model` installs the same pinned revision for users who do not
+have git-lfs; both are covered by the attribution above.
+
 ## Inference engine
 
 - **kestrel** (0.9.1) and the **Photon** runtime by Moondream — <https://moondream.ai/photon>.
@@ -46,7 +50,8 @@ the authoritative text.
 | [pynput](https://github.com/moses-palmer/pynput) | X11-only keystroke fallback | LGPL-3.0 |
 | [PyGObject](https://pygobject.gnome.org) / GTK 3 | settings dialog, tray main loop | LGPL-2.1+ |
 | [dbus-python](https://gitlab.freedesktop.org/dbus/dbus-python) | Klipper clipboard, portal virtual keyboard | MIT (Expat) |
-| [huggingface_hub](https://github.com/huggingface/huggingface_hub) | only used by users to fetch weights once | Apache-2.0 |
+| [git-lfs](https://git-lfs.com) | ships the model weights with the repository clone | MIT |
+| *huggingface.co* | hosts the weights `install.sh` / `--fetch-model` download (plain `urllib`, no client library) | model CC-BY-4.0 |
 | [wl-clipboard](https://github.com/bugaevc/wl-clipboard) | clipboard on Wayland | MIT |
 
 ## System interfaces

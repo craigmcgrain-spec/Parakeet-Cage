@@ -48,15 +48,31 @@ cp "${PROJECT_ROOT}/README.md" "${PROJECT_ROOT}/LICENSE" "${PROJECT_ROOT}/CREDIT
 cp "${PROJECT_ROOT}/LICENSE" "${PROJECT_ROOT}/CREDITS.md" "${APPDIR}/usr/share/doc/parakeet-cage/"
 
 # --- model weights ----------------------------------------------------------
-# Placed where transcriber.DEFAULT_SEARCH_PATHS looks first:
+# Placed where transcriber.default_search_paths() looks first:
 #   <package parent>/models/parakeet-redux  ==  usr/lib/python/models/parakeet-redux
 if [ "${BUNDLE_MODEL}" = "1" ]; then
-  if [ ! -f "${MODEL_SRC}/model.safetensors" ] || [ ! -f "${MODEL_SRC}/config.json" ]; then
-    echo "ERROR: no model weights in ${MODEL_SRC}" >&2
-    echo "       set PARAKEET_MODEL_DIR, or PARAKEET_BUNDLE_MODEL=0 to build without them" >&2
+  # A git-lfs pointer stub passes a plain existence check and would ship a bundle
+  # that cannot transcribe, so ask the same checker the application uses.
+  MODEL_CHECK="$(python3 - "${PROJECT_ROOT}" "${MODEL_SRC}" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from parakeet_cage import model_store
+print(model_store.check_weights(sys.argv[2]).detail)
+PY
+)"
+  if ! python3 - "${PROJECT_ROOT}" "${MODEL_SRC}" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from parakeet_cage import model_store
+raise SystemExit(0 if model_store.check_weights(sys.argv[2]).ok else 1)
+PY
+  then
+    echo "ERROR: no usable model weights in ${MODEL_SRC}" >&2
+    echo "       ${MODEL_CHECK}" >&2
+    echo "       run ./install.sh (or 'git lfs pull'), or set PARAKEET_BUNDLE_MODEL=0" >&2
     exit 1
   fi
-  log "Bundling model weights from ${MODEL_SRC}"
+  log "Bundling model weights from ${MODEL_SRC} (${MODEL_CHECK})"
   mkdir -p "${APPDIR}/usr/lib/python/models"
   cp -r "${MODEL_SRC}" "${APPDIR}/usr/lib/python/models/parakeet-redux"
 else

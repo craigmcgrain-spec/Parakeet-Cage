@@ -4,6 +4,40 @@ All notable changes to Parakeet Cage. This project adheres to
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+The model now ships with the repository, and one command installs everything - including the
+question of whether to download it.
+
+### Added
+
+- **`install.sh` / `parakeet-cage-install`** (`parakeet_cage/install.py`, stdlib-only so it runs in
+  a fresh clone): preflight checks with the distribution's package command (offered, never run
+  silently), `pip install --user -e .`, and a prompt - *"Download the Parakeet Redux weights now
+  (~178 MB, sha256-verified)?"* - before anything is fetched. `--yes`, `--no-model`, `--skip-app`
+  for scripts; a missing TTY demands one of them instead of guessing.
+- **`parakeet_cage/model_store.py`**: the pinned revision
+  (`moondream/parakeet-redux@2bf1286`), size and sha256 for all four files, `check_weights` and the
+  single downloader `fetch_model` (streams, verifies, `os.replace`s; verified files are skipped so
+  re-runs are cheap and an interrupted download resumes per file).
+- **`parakeet-cage --fetch-model`**: fetch and verify the weights into
+  `~/.local/share/parakeet-cage/models/parakeet-redux`, then exit.
+- The weights are tracked through **git-lfs**, so `git clone` alone yields a working install where
+  git-lfs is available.
+- AppImage builds now fail loudly when the model directory holds git-lfs pointers, instead of
+  producing an image that cannot transcribe.
+
+### Changed
+
+- `resolve_local_model_path` verifies the pinned **sizes** and rejects git-lfs pointer stubs and
+  truncated files, so an unusable directory can no longer shadow a working copy later in the search
+  order; its error lists each candidate and the fix (`./install.sh`, `git lfs pull`,
+  `--fetch-model`).
+- **The running app never uses the network**: there is no automatic download at startup. Weights
+  arrive during installation (git-lfs or the installer's prompt) or from `--fetch-model`.
+- Install documentation: HTTPS clone URL, one installer, and the two ways the weights arrive;
+  manual steps kept for anyone who wants them.
+
 ## [1.3.0] — 2026-10-06
 
 The auto dictionary: what the app proposes now lives in its own store, so a machine-suggested word

@@ -41,6 +41,7 @@ dev = ["pytest>=8"]
 
 [project.scripts]
 parakeet-cage = "parakeet_cage.app:main"
+parakeet-cage-install = "parakeet_cage.install:main"
 
 [project.urls]
 Homepage = "https://github.com/craigmcgrain-spec/Parakeet-Cage"

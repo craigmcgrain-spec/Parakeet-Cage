@@ -45,12 +45,14 @@ class Recorder:
         return Path(dest)
 
 
-def _installer(tmp_path, recorder, *, answers=(), interactive=True, **kwargs):
+def _installer(tmp_path, recorder, *, answers=(), interactive=True, skip_desktop=True, **kwargs):
+    """Installer with stubbed side effects; the launcher is off unless a test wants it."""
     answer_iter = iter(answers)
     lines = []
     installer = install.Installer(
         tmp_path,
         interactive=interactive,
+        skip_desktop=skip_desktop,
         log=lines.append,
         ask_fn=lambda prompt: next(answer_iter, ""),
         run=recorder.run,
@@ -164,11 +166,66 @@ def test_fetch_that_writes_nothing_is_an_error(tmp_path, monkeypatch):
     assert any("error:" in line for line in lines)
 
 
+def test_launcher_writes_a_menu_entry_and_icon(tmp_path, monkeypatch, capsys):
+    pytest.importorskip("PIL")
+    data_home = tmp_path / "xdg"
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    recorder = Recorder()
+    installer, lines = _installer(tmp_path, recorder, skip_model=True, skip_desktop=False)
+    assert installer.run_all() == 0
+
+    entry = data_home / "applications" / "parakeet-cage.desktop"
+    fields = dict(
+        line.split("=", 1) for line in entry.read_text().splitlines() if "=" in line
+    )
+    assert fields["Exec"].endswith("/parakeet-cage") and fields["Exec"].startswith("/")
+    assert fields["TryExec"] == fields["Exec"]
+    assert fields["Icon"] == "parakeet-cage"
+    assert fields["Terminal"] == "false"
+    assert (data_home / "icons" / "hicolor" / "256x256" / "apps" / "parakeet-cage.png").read_bytes()[:4] == b"\x89PNG"
+    assert any("application menu" in line for line in lines)
+
+
+def test_launcher_overwrites_a_stale_entry(tmp_path, monkeypatch):
+    data_home = tmp_path / "xdg"
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    entry = data_home / "applications" / "parakeet-cage.desktop"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("Exec=/old/parakeet-cage\n")
+    recorder = Recorder()
+    installer, _ = _installer(tmp_path, recorder, skip_model=True, skip_desktop=False)
+    installer.run_all()
+    assert "/old/parakeet-cage" not in entry.read_text()
+    assert "Name=Parakeet Cage" in entry.read_text()
+
+
+def test_launcher_can_be_skipped(tmp_path, monkeypatch):
+    data_home = tmp_path / "xdg"
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    recorder = Recorder()
+    installer, lines = _installer(tmp_path, recorder, skip_model=True, skip_desktop=True)
+    assert installer.run_all() == 0
+    assert not (data_home / "applications").exists()
+    assert any("--no-desktop" in line for line in lines)
+
+
+def test_launcher_falls_back_to_the_module_when_the_script_is_gone(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(install, "console_script_path", lambda: None)
+    recorder = Recorder()
+    installer, _ = _installer(tmp_path, recorder, skip_model=True, skip_desktop=False)
+    assert installer.run_all() == 0
+    text = (tmp_path / "xdg" / "applications" / "parakeet-cage.desktop").read_text()
+    assert f"Exec={install.sys.executable} -m parakeet_cage.app" in text
+    assert "TryExec" not in text
+
+
 def test_preflight_blocks_when_pip_is_absent(tmp_path):
     recorder = Recorder()
     lines = []
     installer = install.Installer(
         tmp_path,
+        skip_desktop=True,
         log=lines.append,
         ask_fn=lambda prompt: "",
         run=recorder.run,
@@ -186,6 +243,7 @@ def test_assume_yes_answers_the_question(tmp_path, monkeypatch):
     installer = install.Installer(
         tmp_path,
         assume_yes=True,
+        skip_desktop=True,
         log=lambda line: None,
         ask_fn=lambda prompt: pytest.fail("must not prompt with --yes"),
         run=recorder.run,

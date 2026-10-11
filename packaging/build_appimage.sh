@@ -80,25 +80,29 @@ else
 fi
 
 # --- desktop entry and icon -------------------------------------------------
+# Same template and same icon code as the CLI installer (parakeet_cage.desktop):
+# the entry inside the AppImage keeps the bare command name, which AppRun puts
+# on PATH, so it stays byte-compatible with earlier builds.
 log "Installing desktop entry and icon"
-install -m 0644 "${PROJECT_ROOT}/packaging/parakeet-cage.desktop" "${APPDIR}/parakeet-cage.desktop"
-install -m 0644 "${PROJECT_ROOT}/packaging/parakeet-cage.desktop" \
-        "${APPDIR}/usr/share/applications/parakeet-cage.desktop"
-
-python3 - "${APPDIR}" <<'PY'
+python3 - "${PROJECT_ROOT}" "${APPDIR}" <<'PY'
 import sys
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+sys.path.insert(0, sys.argv[1])
+from parakeet_cage import desktop
 
-appdir = Path(sys.argv[1])
-img = Image.new("RGBA", (256, 256), color=(0, 0, 0, 0))
-draw = ImageDraw.Draw(img)
-draw.ellipse([16, 16, 240, 240], fill="#2ecc71", outline="#27ae60", width=8)
-img.save(appdir / "parakeet-cage.png")
-img.save(appdir / ".DirIcon", format="PNG")
-img.save(appdir / "usr/share/icons/hicolor/256x256/apps/parakeet-cage.png")
+appdir = Path(sys.argv[2])
+entry = desktop.render_entry("parakeet-cage")
+(appdir / "parakeet-cage.desktop").write_text(entry, encoding="utf-8")
+(appdir / "usr/share/applications/parakeet-cage.desktop").write_text(entry, encoding="utf-8")
+desktop.write_icon(appdir / "parakeet-cage.png")
+(appdir / ".DirIcon").write_bytes((appdir / "parakeet-cage.png").read_bytes())
+desktop.write_icon(appdir / "usr/share/icons/hicolor/256x256/apps/parakeet-cage.png")
 PY
+chmod 0644 "${APPDIR}/parakeet-cage.desktop" \
+           "${APPDIR}/usr/share/applications/parakeet-cage.desktop" \
+           "${APPDIR}/parakeet-cage.png" \
+           "${APPDIR}/usr/share/icons/hicolor/256x256/apps/parakeet-cage.png"
 
 # --- AppRun -----------------------------------------------------------------
 log "Writing AppRun"

@@ -17,9 +17,10 @@ import platform
 import shutil
 import subprocess
 import sys
+import sysconfig
 from typing import Any, Callable, List, Optional, Sequence, Tuple
 
-from parakeet_cage import model_store
+from parakeet_cage import desktop, model_store
 
 
 PYTHON_MIN = (3, 11)
@@ -140,6 +141,31 @@ def collect_requirements(run: Callable[..., Any] = subprocess.run) -> List[Requi
     ]
 
 
+def console_script_path() -> Optional[Path]:
+    """Where `pip install --user` put the `parakeet-cage` script, if anywhere.
+
+    A GUI session's PATH need not contain ~/.local/bin, which is why the menu
+    entry gets the absolute path rather than the bare command name.
+    """
+    try:
+        scripts = Path(sysconfig.get_path("scripts", "posix_user"))
+    except (KeyError, TypeError):
+        scripts = None
+    candidate = scripts / "parakeet-cage" if scripts else None
+    if candidate and candidate.is_file():
+        return candidate
+    found = shutil.which("parakeet-cage")
+    return Path(found) if found else None
+
+
+def launch_command() -> Tuple[str, str]:
+    """The `Exec=` command for the menu entry, and a `TryExec=` path when it is one."""
+    script = console_script_path()
+    if script is not None:
+        return str(script), str(script)
+    return f"{sys.executable} -m parakeet_cage.app", ""
+
+
 class Installer:
     """The whole installation, with its side effects injected for testing."""
 
@@ -150,6 +176,7 @@ class Installer:
         assume_yes: bool = False,
         skip_model: bool = False,
         skip_app: bool = False,
+        skip_desktop: bool = False,
         interactive: bool = True,
         log: Callable[[str], None] = print,
         ask_fn: Optional[Callable[[str], str]] = None,
@@ -161,6 +188,7 @@ class Installer:
         self.assume_yes = assume_yes
         self.skip_model = skip_model
         self.skip_app = skip_app
+        self.skip_desktop = skip_desktop
         self.interactive = interactive
         self.log = log
         self.ask_fn = ask_fn or input
@@ -241,6 +269,39 @@ class Installer:
             self.log(f'    export PATH="{bindir}:$PATH"')
         return 0
 
+    def install_launcher(self) -> int:
+        """Menu entry plus icon, so the app is launchable without a terminal."""
+        if self.skip_desktop:
+            self.log("\nDesktop entry: skipped (--no-desktop)")
+            return 0
+
+        exec_path, tryexec = launch_command()
+        applications = desktop.applications_dir()
+        applications.mkdir(parents=True, exist_ok=True)
+        entry = applications / "parakeet-cage.desktop"
+        entry.write_text(
+            desktop.render_entry(exec_path, tryexec=tryexec), encoding="utf-8"
+        )
+        entry.chmod(0o644)
+
+        icon = desktop.icon_dir(Path(applications.parent)) / f"{desktop.ICON_NAME}.png"
+        try:
+            desktop.write_icon(icon, desktop.ICON_SIZE)
+            icon_note = str(icon)
+        except ImportError:
+            icon_note = "not installed (pillow missing) - the menu shows a generic icon"
+
+        self.log("\nDesktop entry:")
+        self.log(f"  {entry}")
+        self.log(f"  Exec={exec_path}")
+        self.log(f"  icon: {icon_note}")
+        self.log("  Launch it from the application menu, or run 'parakeet-cage' in a terminal.")
+
+        refresh = shutil.which("update-desktop-database")
+        if refresh:
+            self.run([refresh, str(applications)], capture_output=True)
+        return 0
+
     def install_model(self) -> int:
         self.log("\nModel weights: Parakeet Redux by Moondream (CC-BY-4.0, ~178 MB)")
         in_clone = self.repo_root / "models" / model_store.MODEL_DIR_NAME
@@ -286,11 +347,12 @@ class Installer:
         self.log(f"Parakeet Cage installer\n  clone: {self.repo_root}")
         if self.preflight():
             return 1
-        for stage in (self.install_app, self.install_model):
+        for stage in (self.install_app, self.install_launcher, self.install_model):
             code = stage()
             if code:
                 return code
         self.log("\nDone. Next steps")
+        self.log("  Launch: application menu -> Parakeet Cage, or 'parakeet-cage' in a terminal.")
         self.log("  Hold F9 in any text field, speak, release; the text appears at the cursor.")
         self.log("  Tray icon: green idle, red recording, amber transcribing.")
         self.log("  parakeet-cage --dictionary   manage your word list")
@@ -305,7 +367,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     parser.add_argument("--yes", "-y", action="store_true", help="non-interactive: accept the model download")
     parser.add_argument("--no-model", action="store_true", help="install the app only; never download weights")
-    parser.add_argument("--skip-app", action="store_true", help="skip pip; install the weights only")
+    parser.add_argument("--skip-app", action="store_true", help="skip pip; install the launcher and weights only")
+    parser.add_argument("--no-desktop", action="store_true", help="do not install the application menu entry")
     args = parser.parse_args(argv)
     if args.yes and args.no_model:
         parser.error("--yes and --no-model contradict each other")
@@ -334,6 +397,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         assume_yes=args.yes,
         skip_model=args.no_model,
         skip_app=args.skip_app,
+        skip_desktop=args.no_desktop,
         interactive=interactive,
     )
     return installer.run_all()

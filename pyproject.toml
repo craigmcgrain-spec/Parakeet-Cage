@@ -56,5 +56,8 @@ Issues = "https://github.com/craigmcgrain-spec/Parakeet-Cage/issues"
 [tool.setuptools]
 packages = ["parakeet_cage"]
 
+[tool.setuptools.package-data]
+parakeet_cage = ["parakeet-cage.desktop"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

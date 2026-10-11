@@ -64,12 +64,14 @@ anything without asking:
 |---|---|
 | preflight | python ≥ 3.11, pip, git, git-lfs, PyGObject, dbus-python, sounddevice, wl-clipboard and the portal; prints the `dnf`/`apt`/`pacman` line for anything missing, and offers to run it on a known distribution |
 | app | `python3 -m pip install --user -e .` (editable, so the clone stays the source of truth) |
+| desktop | writes `~/.local/share/applications/parakeet-cage.desktop` with an **absolute** `Exec` (a GUI session's `PATH` need not contain `~/.local/bin`) and the icon into the hicolor theme, so the app appears in your application menu |
 | model | uses the weights already in the clone (git-lfs) if they are there, otherwise **asks** whether to download the ~178 MB Parakeet Redux weights, then verifies every file's sha256 |
 | finish | next steps, and the command to re-run any part |
 
 Non-interactive use: `./install.sh --yes` (accept the download), `./install.sh --no-model`,
-`./install.sh --skip-app`. After the first install, `parakeet-cage-install` re-runs the same
-installer, and `parakeet-cage --fetch-model` fetches just the weights.
+`./install.sh --no-desktop`, `./install.sh --skip-app`. After the first install,
+`parakeet-cage-install` re-runs the same installer, and `parakeet-cage --fetch-model` fetches just
+the weights.
 
 ### Model weights
 
@@ -123,9 +125,22 @@ Python 3, PyGObject and dbus-python (see [AppImage packaging](#appimage-packagin
 
 ## Usage
 
+Start it from your application menu (**Parakeet Cage** — the entry `install.sh` writes), or from a
+terminal:
+
 ```bash
 parakeet-cage          # start the daemon (tray icon + global hotkeys)
 ```
+
+Either way the daemon runs in the **foreground** and stays in your session: the tray icon is its
+status display and its menu, and it must keep running for the hotkey to work. Quit it from the tray
+menu or with the quit hotkey. Only one instance can hold the record hotkey, so a second one (say a
+terminal launch while the menu-launched copy is running) will log `the X server refused the grab`
+and stay silent until the first exits.
+
+`parakeet-cage` is a console script in `~/.local/bin` — the installer warns if that directory is
+missing from your `PATH`. The menu entry does not depend on `PATH`: the installer puts the absolute
+path in `Exec=`.
 
 1. Focus the text field you want to dictate into.
 2. **Hold** the record hotkey (default `F9`), speak, **release**.
@@ -347,7 +362,7 @@ rarity-checked fuzzy match.
 ## Development
 
 ```bash
-python3 -m pytest -q          # 168 tests
+python3 -m pytest -q          # 180 tests
 ```
 
 | Path | Contents |
@@ -355,6 +370,7 @@ python3 -m pytest -q          # 168 tests
 | `parakeet_cage/` | application package (config, audio, ASR, hotkeys, clipboard, tray, GTK settings, text post-processing) |
 | `parakeet_cage/model_store.py` | pinned weights: size/sha256 checks, the only downloader (`--fetch-model`, installer) |
 | `parakeet_cage/install.py` | the CLI installer behind `install.sh` / `parakeet-cage-install` |
+| `parakeet_cage/desktop.py` | the `.desktop` template and icon shared by the installer and the AppImage build |
 | `install.sh` | one-command install for a fresh clone; asks before downloading the model |
 | `tests/` | pytest suite, including a fake-bus portal session harness |
 | `packaging/` | AppImage build script and desktop entry |

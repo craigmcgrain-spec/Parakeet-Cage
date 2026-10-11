@@ -4,7 +4,8 @@
 #   ./install.sh                 interactive: asks before downloading the model
 #   ./install.sh --yes           non-interactive: install the app and the model
 #   ./install.sh --no-model      install the app only
-#   ./install.sh --skip-app      install the weights only
+#   ./install.sh --skip-app      skip pip; install the launcher and weights only
+#   ./install.sh --no-desktop    do not install the application menu entry
 #
 # Runs parakeet_cage/install.py with whatever python3 is on PATH: the installer
 # itself needs nothing but the standard library.

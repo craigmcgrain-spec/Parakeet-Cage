@@ -20,6 +20,11 @@ question of whether to download it.
   (`moondream/parakeet-redux@2bf1286`), size and sha256 for all four files, `check_weights` and the
   single downloader `fetch_model` (streams, verifies, `os.replace`s; verified files are skipped so
   re-runs are cheap and an interrupted download resumes per file).
+- **A desktop entry and icon**: `install.sh` writes `~/.local/share/applications/parakeet-cage.desktop`
+  (absolute `Exec=`, `TryExec=`, `Icon=parakeet-cage`) plus the 256×256 icon into the user's hicolor
+  theme, so the app launches from the application menu as well as from the terminal. `--no-desktop`
+  skips it. `parakeet_cage/desktop.py` holds the one `.desktop` template and the icon drawing that
+  the AppImage build also uses, replacing its second copy of both.
 - **`parakeet-cage --fetch-model`**: fetch and verify the weights into
   `~/.local/share/parakeet-cage/models/parakeet-redux`, then exit.
 - The weights are tracked through **git-lfs**, so `git clone` alone yields a working install where

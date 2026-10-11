@@ -1,0 +1,5 @@
+# The Parakeet Redux weights ship with this repository through git-lfs (~170 MB),
+# so a clone is a working install. Without git-lfs the clone receives a 130-byte
+# pointer file instead; the app detects that and refuses to load it, and
+# ./install.sh (or `parakeet-cage --fetch-model`) downloads the pinned revision.
+models/parakeet-redux/model.safetensors filter=lfs diff=lfs merge=lfs -text
